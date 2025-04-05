@@ -1,0 +1,15 @@
+streamlit
+torch
+transformers
+Pillow
+numpy
+matplotlib
+opencv-python-headless
+imagehash
+detoxify
+nltk
+piexif
+ftfy
+regex
+tqdm
+git+https://github.com/openai/CLIP.git
