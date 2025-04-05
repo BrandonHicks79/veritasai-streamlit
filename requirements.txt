@@ -1,6 +1,6 @@
 streamlit
-torch
-transformers
+torch==2.1.0
+transformers==4.31.0
 Pillow
 numpy
 matplotlib
@@ -13,3 +13,4 @@ ftfy
 regex
 tqdm
 git+https://github.com/openai/CLIP.git
+
