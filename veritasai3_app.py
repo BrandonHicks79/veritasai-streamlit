@@ -12,102 +12,58 @@ import imagehash
 import os
 import torchvision.transforms as transforms
 import piexif
+import clip  # moved import here — safe now
 
 # ────────────────────────────────────────────────
-#  CACHED HEAVY MODEL LOADERS
+# MUST BE THE VERY FIRST STREAMLIT COMMAND
+# ────────────────────────────────────────────────
+st.set_page_config(
+    page_title="VeritasAI - Image & Text Analyzer",
+    layout="wide",
+    page_icon="🔍",
+    initial_sidebar_state="auto"
+)
+
+# ────────────────────────────────────────────────
+# CACHED HEAVY MODEL LOADERS (use these instead of uncached ones)
 # ────────────────────────────────────────────────
 
 @st.cache_resource(show_spinner="Loading Detoxify (toxicity model)...", ttl="2h")
 def get_detoxify():
     from detoxify import Detoxify
-    return Detoxify('original')  # consider 'unbiased' if you want slightly lighter/faster
+    return Detoxify('original')
 
 @st.cache_resource(show_spinner="Loading sentiment analysis...", ttl="2h")
 def get_sentiment_pipeline():
-    # Explicit small & fast model to reduce memory
     return pipeline(
         "sentiment-analysis",
         model="distilbert-base-uncased-finetuned-sst-2-english",
-        device="cpu"  # very important on Streamlit Cloud
+        device="cpu"
     )
 
 @st.cache_resource(show_spinner="Loading CLIP model...", ttl="2h")
 def get_clip():
-    import clip
     device = "cpu"
-    # ViT-B/32 is the smallest reasonable CLIP variant (~150–200 MB loaded)
     model, preprocess = clip.load("ViT-B/32", device=device)
-    return model, preprocess
+    return model, preprocess, device
 
-# Optional: lazy NLTK data download (only if/when needed)
 @st.cache_resource
 def download_nltk_data():
     nltk.download('vader_lexicon', quiet=True)
     nltk.download('punkt', quiet=True)
-    # add others only if your code actually uses them
 
-# Call once at startup if needed (optional)
-download_nltk_data()
+download_nltk_data()  # safe to call early
 
-st.title("VeritasAI")
+# ────────────────────────────────────────────────
+# YOUR OTHER FUNCTIONS (moved up — define before UI)
+# ────────────────────────────────────────────────
 
-# Example usage
-text = st.text_area("Enter text to analyze")
-if st.button("Analyze"):
-    if text:
-        detox = get_detoxify()
-        results = detox.predict(text)
-        st.write("Toxicity results:", results)
-
-        sentiment_pipe = get_sentiment_pipeline()
-        sent = sentiment_pipe(text)[0]
-        st.write("Sentiment:", sent)
-
-# Initial setup
-st.set_page_config(page_title="VeritasAI - Image & Text Analyzer", layout="centered")
-st.title("🤖 VeritasAI")
-st.markdown("""
-<small>
-<p><strong>Designed & Created by Brandon Hicks</strong>  
-<br>A.I. Ambassador | Ethical AI Developer</p>
-</small>
-
----
-
-📜 **Ethical Frameworks Applied**
-
-- **Deontological Ethics** — rooted in principles of truth, transparency, and duty-based analysis.
-- **Transparency & Explainability** — empowering users with meaningful, interpretable insights.
-
----
-""", unsafe_allow_html=True)
-
-# Load NLP models
-@st.cache_resource
-def load_nlp_models():
-    sentiment_pipeline = pipeline("sentiment-analysis", framework="pt")
-    detox_model = Detoxify('original')
-    deberta_tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-v3-small")
-    deberta_model = AutoModelForSequenceClassification.from_pretrained("microsoft/deberta-v3-small")
-    simcse_tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
-    simcse_model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-roberta-base")
-    return sentiment_pipeline, detox_model, deberta_tokenizer, deberta_model, simcse_tokenizer, simcse_model
-
-# Load CLIP
-@st.cache_resource
-def load_clip():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, preprocess = clip.load("ViT-B/32", device=device)
-    return model, preprocess, device
-
-# NLP utility
 def get_sentence_embedding(text, tokenizer, model):
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
     with torch.no_grad():
         output = model(**inputs, return_dict=True)
     return F.normalize(output.pooler_output, p=2, dim=1)
 
-# Visualization - Toxicity Bar Chart
 def plot_toxicity(scores):
     fig, ax = plt.subplots()
     labels = list(scores.keys())
@@ -117,34 +73,28 @@ def plot_toxicity(scores):
     buf = io.BytesIO()
     plt.savefig(buf, format="png")
     buf.seek(0)
+    plt.close(fig)  # important: free memory
     return buf
 
-# Visualization - Sentiment Gauge
 def plot_sentiment_gauge_dynamic(score, sentiment_label):
     fig, ax = plt.subplots(figsize=(6, 3), subplot_kw={'projection': 'polar'})
     ax.set_theta_offset(np.pi / 2)
     ax.set_theta_direction(-1)
     ax.set_yticklabels([])
     ax.set_xticks([])
-
     theta = score * np.pi
-
     color = "green" if sentiment_label.upper() == "POSITIVE" else "red" if sentiment_label.upper() == "NEGATIVE" else "gray"
-
     angles = np.linspace(0, np.pi, 100)
     ax.plot(angles, np.full_like(angles, 1), lw=15, color="lightgray")
-
     ax.plot([theta], [1], marker='o', markersize=12, color=color)
     ax.plot([theta, theta], [0, 1], lw=2, color=color)
-
     ax.set_title(f"{sentiment_label.capitalize()} Sentiment ({score:.2f})", va='bottom', color=color, fontsize=12)
-
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
+    plt.close(fig)
     return buf
 
-# Image analysis utilities
 def detect_blur_or_smoothness(image):
     gray = cv2.cvtColor(np.array(image.convert("L")), cv2.COLOR_GRAY2BGR)
     return cv2.Laplacian(gray, cv2.CV_64F).var() < 100
@@ -178,91 +128,94 @@ def decode_gps(exif_gps):
         lat = exif_gps.get(2)
         lon_ref = exif_gps.get(3).decode()
         lon = exif_gps.get(4)
-
         def convert(coord):
             d, m, s = coord
             return d[0]/d[1] + (m[0]/m[1])/60 + (s[0]/s[1])/3600
-
         latitude = convert(lat)
         longitude = convert(lon)
         if lat_ref == 'S':
             latitude *= -1
         if lon_ref == 'W':
             longitude *= -1
-
         return round(latitude, 6), round(longitude, 6)
     except Exception:
         return None, None
 
-# Load models
-sentiment_pipeline, detox_model, deberta_tokenizer, deberta_model, simcse_tokenizer, simcse_model = load_nlp_models()
-clip_model, clip_preprocess, clip_device = load_clip()
+# ────────────────────────────────────────────────
+# UI STARTS HERE
+# ────────────────────────────────────────────────
 
-# UI logic
+st.title("🤖 VeritasAI")
+st.markdown("""
+<small>
+<p><strong>Designed & Created by Brandon Hicks</strong><br>
+A.I. Ambassador | Ethical AI Developer</p>
+</small>
+---
+📜 **Ethical Frameworks Applied**  
+- **Deontological Ethics** — rooted in principles of truth, transparency, and duty-based analysis.  
+- **Transparency & Explainability** — empowering users with meaningful, interpretable insights.
+---
+""", unsafe_allow_html=True)
+
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
     text_input = st.text_area("Enter text to analyze:")
     if st.button("Analyze Text") and text_input:
-        sentiment = sentiment_pipeline(text_input)[0]
-        st.markdown(f"**Sentiment:** `{sentiment['label']}` (Confidence: `{sentiment['score']:.2f}`)")
+        with st.spinner("Analyzing..."):
+            sentiment = get_sentiment_pipeline()(text_input)[0]
+            st.markdown(f"**Sentiment:** `{sentiment['label']}` (Confidence: `{sentiment['score']:.2f}`)")
+            gauge_image = plot_sentiment_gauge_dynamic(sentiment['score'], sentiment['label'])
+            st.image(gauge_image, caption="Sentiment Gauge", use_container_width=True)
 
-        gauge_image = plot_sentiment_gauge_dynamic(sentiment['score'], sentiment['label'])
-        st.image(gauge_image, caption="Sentiment Gauge", use_container_width=True)
+            toxicity = get_detoxify().predict(text_input)
+            st.image(plot_toxicity(toxicity), caption="Toxicity Scores", use_container_width=True)
 
-        toxicity = detox_model.predict(text_input)
-        st.image(plot_toxicity(toxicity), caption="Toxicity Scores", use_container_width=True)
-
-        neutral = "This is a neutral and fact-based version of the same headline."
-        sim_score = F.cosine_similarity(
-            get_sentence_embedding(text_input, simcse_tokenizer, simcse_model),
-            get_sentence_embedding(neutral, simcse_tokenizer, simcse_model)
-        ).item()
-        st.markdown(f"📐 Similarity to neutral phrasing: `{sim_score:.2f}`")
+            neutral = "This is a neutral and fact-based version of the same headline."
+            # If you still want SIMCSE — load it cached too (add function if needed)
+            # For now commented to save memory
+            # sim_score = ...
+            # st.markdown(f"📐 Similarity to neutral phrasing: `{sim_score:.2f}`")
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_container_width=True)
+        with st.spinner("Processing image..."):
+            image = Image.open(uploaded_file).convert("RGB")
+            st.image(image, caption="Uploaded Image", use_container_width=True)
 
-        blur_flag = detect_blur_or_smoothness(image)
-        label, conf = semantic_check_with_clip(image, clip_model, clip_preprocess, clip_device)
+            clip_model, clip_preprocess, clip_device = get_clip()
+            label, conf = semantic_check_with_clip(image, clip_model, clip_preprocess, clip_device)
+            st.markdown(f"🧠 CLIP Verdict: **{label}** (Confidence: `{conf:.2f}`)")
 
-        st.markdown(f"🧠 CLIP Verdict: **{label}** (Confidence: `{conf:.2f}`)")
-        st.markdown("⚠️ Image may be overly smooth." if blur_flag else "✅ No over-smoothing detected.")
+            blur_flag = detect_blur_or_smoothness(image)
+            st.markdown("⚠️ Image may be overly smooth." if blur_flag else "✅ No over-smoothing detected.")
 
-        metadata = extract_exif_data(image)
-        st.markdown("### 🧾 Metadata (EXIF)")
-        for key, value in metadata.items():
-            if key != "GPSInfo":
-                st.markdown(f"**{key}**: {value}")
+            metadata = extract_exif_data(image)
+            st.markdown("### 🧾 Metadata (EXIF)")
+            for key, value in metadata.items():
+                if key != "GPSInfo":
+                    st.markdown(f"**{key}**: {value}")
 
-        if metadata.get("Make") and metadata.get("Model"):
-            st.markdown("✅ Metadata suggests this was taken with a real camera.")
-            metadata_confidence = 1
-        elif metadata.get("Error") or not any(metadata.values()):
-            st.markdown("⚠️ No metadata found — image may be edited, AI-generated, or stripped.")
             metadata_confidence = 0
-        else:
-            st.markdown("⚠️ Incomplete metadata — uncertain origin.")
-            metadata_confidence = 0.5
-
-        if "GPSInfo" in metadata:
-            lat, lon = decode_gps(metadata["GPSInfo"])
-            if lat and lon:
-                st.markdown(f"📍 **Picture was likely taken here:** [View on Google Maps](https://www.google.com/maps?q={lat},{lon})")
-
-        # Final Verdict Logic
-        if label.lower().startswith("an ai") or conf < 0.5:
-            if blur_flag:
-                verdict = "🔴 Likely AI-Generated"
+            if metadata.get("Make") and metadata.get("Model"):
+                st.markdown("✅ Metadata suggests this was taken with a real camera.")
+                metadata_confidence = 1
+            elif metadata.get("Error") or not any(metadata.values()):
+                st.markdown("⚠️ No metadata found — image may be edited, AI-generated, or stripped.")
             else:
-                verdict = "⚠️ Possibly Real – Smooth but semantically flagged"
-        else:
-            if metadata_confidence == 1:
-                verdict = "✅ Likely Real – Verified by EXIF metadata"
-            else:
-                verdict = "⚠️ Suspected Fake — overly smooth" if blur_flag else "✅ Likely Real"
+                st.markdown("⚠️ Incomplete metadata — uncertain origin.")
+                metadata_confidence = 0.5
 
-        st.markdown(f"### Final Verdict: {verdict}")
+            if "GPSInfo" in metadata:
+                lat, lon = decode_gps(metadata["GPSInfo"])
+                if lat and lon:
+                    st.markdown(f"📍 **Picture was likely taken here:** [View on Google Maps](https://www.google.com/maps?q={lat},{lon})")
+
+            # Final Verdict
+            if label.lower().startswith("an ai") or conf < 0.5:
+                verdict = "🔴 Likely AI-Generated" if blur_flag else "⚠️ Possibly Real – Smooth but semantically flagged"
+            else:
+                verdict = "✅ Likely Real – Verified by EXIF metadata" if metadata_confidence == 1 else "⚠️ Suspected Fake — overly smooth" if blur_flag else "✅ Likely Real"
+            st.markdown(f"### Final Verdict: {verdict}")
