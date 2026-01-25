@@ -6,14 +6,62 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassifica
 import matplotlib.pyplot as plt
 import numpy as np
 import io
-from detoxify import Detoxify
 import nltk
 import cv2
 import imagehash
 import os
-import clip
 import torchvision.transforms as transforms
 import piexif
+
+# ────────────────────────────────────────────────
+#  CACHED HEAVY MODEL LOADERS
+# ────────────────────────────────────────────────
+
+@st.cache_resource(show_spinner="Loading Detoxify (toxicity model)...", ttl="2h")
+def get_detoxify():
+    from detoxify import Detoxify
+    return Detoxify('original')  # consider 'unbiased' if you want slightly lighter/faster
+
+@st.cache_resource(show_spinner="Loading sentiment analysis...", ttl="2h")
+def get_sentiment_pipeline():
+    # Explicit small & fast model to reduce memory
+    return pipeline(
+        "sentiment-analysis",
+        model="distilbert-base-uncased-finetuned-sst-2-english",
+        device="cpu"  # very important on Streamlit Cloud
+    )
+
+@st.cache_resource(show_spinner="Loading CLIP model...", ttl="2h")
+def get_clip():
+    import clip
+    device = "cpu"
+    # ViT-B/32 is the smallest reasonable CLIP variant (~150–200 MB loaded)
+    model, preprocess = clip.load("ViT-B/32", device=device)
+    return model, preprocess
+
+# Optional: lazy NLTK data download (only if/when needed)
+@st.cache_resource
+def download_nltk_data():
+    nltk.download('vader_lexicon', quiet=True)
+    nltk.download('punkt', quiet=True)
+    # add others only if your code actually uses them
+
+# Call once at startup if needed (optional)
+download_nltk_data()
+
+st.title("VeritasAI")
+
+# Example usage
+text = st.text_area("Enter text to analyze")
+if st.button("Analyze"):
+    if text:
+        detox = get_detoxify()
+        results = detox.predict(text)
+        st.write("Toxicity results:", results)
+
+        sentiment_pipe = get_sentiment_pipeline()
+        sent = sentiment_pipe(text)[0]
+        st.write("Sentiment:", sent)
 
 # Initial setup
 st.set_page_config(page_title="VeritasAI - Image & Text Analyzer", layout="centered")
