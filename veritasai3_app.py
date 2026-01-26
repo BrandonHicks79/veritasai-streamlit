@@ -2,20 +2,19 @@ import streamlit as st
 from PIL import Image
 import torch
 import torch.nn.functional as F
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification, AutoModel
+from transformers import pipeline
 import matplotlib.pyplot as plt
 import numpy as np
 import io
 import nltk
 import cv2
-import imagehash
 import os
 import torchvision.transforms as transforms
 import piexif
 import clip
 
 # ────────────────────────────────────────────────
-# MUST BE THE VERY FIRST STREAMLIT COMMAND
+# PAGE CONFIG – MUST BE FIRST STREAMLIT CALL
 # ────────────────────────────────────────────────
 st.set_page_config(
     page_title="VeritasAI - Image & Text Analyzer",
@@ -25,15 +24,15 @@ st.set_page_config(
 )
 
 # ────────────────────────────────────────────────
-# CACHED HEAVY MODEL LOADERS
+# CACHED MODELS
 # ────────────────────────────────────────────────
 
-@st.cache_resource(show_spinner="Loading Detoxify (toxicity model)...", ttl="2h")
+@st.cache_resource(show_spinner="Loading Detoxify...", ttl="2h")
 def get_detoxify():
     from detoxify import Detoxify
     return Detoxify('original')
 
-@st.cache_resource(show_spinner="Loading sentiment analysis...", ttl="2h")
+@st.cache_resource(show_spinner="Loading sentiment model...", ttl="2h")
 def get_sentiment_pipeline():
     return pipeline(
         "sentiment-analysis",
@@ -41,7 +40,7 @@ def get_sentiment_pipeline():
         device="cpu"
     )
 
-@st.cache_resource(show_spinner="Loading CLIP model...", ttl="2h")
+@st.cache_resource(show_spinner="Loading CLIP...", ttl="2h")
 def get_clip():
     device = "cpu"
     model, preprocess = clip.load("ViT-B/32", device=device)
@@ -71,7 +70,7 @@ def extract_exif_data(image):
             exif_clean["GPSInfo"] = exif_dict["GPS"]
         return exif_clean
     except Exception as e:
-        return {"Error": f"Failed to extract EXIF data: {str(e)}"}
+        return {"Error": f"Failed to extract EXIF: {str(e)}"}
 
 def decode_gps(exif_gps):
     try:
@@ -102,9 +101,7 @@ def decode_gps(exif_gps):
 
 def plot_toxicity(scores):
     fig, ax = plt.subplots()
-    labels = list(scores.keys())
-    values = list(scores.values())
-    ax.bar(labels, values, color='red')
+    ax.bar(list(scores.keys()), list(scores.values()), color='red')
     ax.set_title("Toxicity Scores")
     buf = io.BytesIO()
     plt.savefig(buf, format="png")
@@ -124,7 +121,7 @@ def plot_sentiment_gauge_dynamic(score, sentiment_label):
     ax.plot(angles, np.full_like(angles, 1), lw=15, color="lightgray")
     ax.plot([theta], [1], marker='o', markersize=12, color=color)
     ax.plot([theta, theta], [0, 1], lw=2, color=color)
-    ax.set_title(f"{sentiment_label.capitalize()} Sentiment ({score:.2f})", va='bottom', color=color, fontsize=12)
+    ax.set_title(f"{sentiment_label.capitalize()} ({score:.2f})", va='bottom', color=color, fontsize=12)
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
@@ -135,6 +132,26 @@ def detect_blur_or_smoothness(image):
     gray = cv2.cvtColor(np.array(image.convert("L")), cv2.COLOR_GRAY2BGR)
     return cv2.Laplacian(gray, cv2.CV_64F).var() < 100
 
+def detect_noise_level(image):
+    gray = np.array(image.convert("L"))
+    noise_std = np.std(gray)
+    return noise_std < 10  # Tune this threshold after testing
+
+def error_level_analysis(image, quality=90):
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=quality)
+    buf.seek(0)
+    resaved = Image.open(buf)
+    ela_image = Image.new("RGB", image.size)
+    for x in range(image.width):
+        for y in range(image.height):
+            r, g, b = image.getpixel((x, y))
+            rr, gg, bb = resaved.getpixel((x, y))
+            ela_image.putpixel((x, y), (abs(r - rr)*2, abs(g - gg)*2, abs(b - bb)*2))
+    ela_array = np.array(ela_image)
+    ela_variance = np.var(ela_array)
+    return ela_variance < 50  # Tune after testing
+
 def semantic_check_with_clip(image, model, preprocess, device):
     inputs = preprocess(image).unsqueeze(0).to(device)
     tokens = clip.tokenize(["a real photo", "an AI-generated image"]).to(device)
@@ -144,7 +161,7 @@ def semantic_check_with_clip(image, model, preprocess, device):
     return labels[np.argmax(probs)], max(probs)
 
 # ────────────────────────────────────────────────
-# UI
+# MAIN UI
 # ────────────────────────────────────────────────
 
 st.title("🤖 VeritasAI")
@@ -186,15 +203,14 @@ if mode == "Text":
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-    
+
     if uploaded_file:
         with st.spinner("Processing image..."):
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_container_width=True)
 
-            # Metadata extraction and display
+            # ── Metadata ──
             metadata = extract_exif_data(image)
-
             st.markdown("### 🧾 Metadata (EXIF)")
             if "Error" in metadata:
                 st.error(metadata["Error"])
@@ -203,7 +219,7 @@ elif mode == "Image":
                     if key != "GPSInfo":
                         st.markdown(f"**{key}**: {value}")
 
-            # GPS coordinates link
+            # GPS
             gps_lat, gps_lon = decode_gps(metadata.get("GPSInfo"))
             if gps_lat is not None and gps_lon is not None:
                 maps_url = f"https://www.google.com/maps?q={gps_lat},{gps_lon}&z=16"
@@ -216,7 +232,7 @@ elif mode == "Image":
             else:
                 st.markdown("📍 **No valid GPS coordinates found in metadata.**")
 
-            # Continue with CLIP, blur, verdict, etc.
+            # ── AI Detection Signals ──
             clip_model, clip_preprocess, clip_device = get_clip()
             label, conf = semantic_check_with_clip(image, clip_model, clip_preprocess, clip_device)
             st.markdown(f"🧠 CLIP Verdict: **{label}** (Confidence: `{conf:.2f}`)")
@@ -224,10 +240,22 @@ elif mode == "Image":
             blur_flag = detect_blur_or_smoothness(image)
             st.markdown("⚠️ Image may be overly smooth." if blur_flag else "✅ No over-smoothing detected.")
 
-            # Final verdict logic (example - expand as needed)
-            metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0.5
-            if label.lower().startswith("an ai") or conf < 0.5:
-                verdict = "🔴 Likely AI-Generated" if blur_flag else "⚠️ Possibly Real – Smooth but semantically flagged"
+            low_noise_flag = detect_noise_level(image)
+            st.markdown("⚠️ Suspiciously low noise levels detected." if low_noise_flag else "✅ Normal noise levels.")
+
+            ela_flag = error_level_analysis(image)
+            st.markdown("⚠️ Uniform compression artifacts (possible AI)." if ela_flag else "✅ Varied compression (likely real).")
+
+            # ── Final Verdict ──
+            metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
+            flags = [blur_flag, low_noise_flag, ela_flag]
+            ai_flags_count = sum(flags)
+
+            if label.lower().startswith("an ai") or conf < 0.5 or ai_flags_count >= 2 or metadata_confidence < 1:
+                verdict = "🔴 Likely AI-Generated or Enhanced"
+            elif ai_flags_count == 1:
+                verdict = "⚠️ Suspicious – Possible Manipulation"
             else:
-                verdict = "✅ Likely Real – Verified by EXIF metadata" if metadata_confidence == 1 else "⚠️ Suspected Fake — overly smooth" if blur_flag else "✅ Likely Real"
+                verdict = "✅ Likely Real"
+
             st.markdown(f"### Final Verdict: {verdict}")
