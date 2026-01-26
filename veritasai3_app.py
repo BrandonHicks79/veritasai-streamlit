@@ -187,34 +187,28 @@ else:
 # ────────────────────────────────────────────────
 # UI STARTS HERE
 # ────────────────────────────────────────────────
-
 st.title("🤖 VeritasAI")
+
 st.markdown("""
-<small>
-<p><strong>Designed & Created by Brandon Hicks</strong><br>
-Ethical AI Developer</p>
-</small>
----
-📜st.markdown("""
 ### What VeritasAI Does
 VeritasAI is an ethical AI-powered analyzer that helps you quickly evaluate text and images for authenticity, bias, and potential manipulation.
 
-- **Text Analysis**: Detects sentiment, toxicity levels, and neutrality — with visual gauges and breakdowns to make insights clear and actionable.
+- **Text Analysis**: Detects sentiment, toxicity levels, and neutrality - with visual gauges and breakdowns to make insights clear and actionable.
 - **Image Analysis**: Checks for signs of AI generation (via CLIP semantics + smoothness detection), extracts camera metadata (make/model/date), and shows GPS location (if embedded) on Google Maps.
 
-All processing happens in your browser session — no data is stored or shared.
+All processing happens in your browser session - no data is stored or shared.
 
 ### How to Use It
 1. Choose **Text** or **Image** mode using the toggle above.
 2. For text: Paste or type content → click **Analyze Text** → review sentiment gauge, toxicity chart, and neutrality score.
 3. For images: Upload a photo (JPG/PNG) → wait a moment → see authenticity verdict, metadata summary, GPS link (if available), and visual flags.
 
-Upload responsibly — use only images/text you have rights to analyze.
+Upload responsibly - use only images/text you have rights to analyze.
 
-""")
 ---
+Designed & Created by Brandon Hicks  
+A.I. Ambassador | Ethical AI Developer
 """, unsafe_allow_html=True)
-
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
