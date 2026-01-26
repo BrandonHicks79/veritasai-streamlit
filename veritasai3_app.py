@@ -108,39 +108,82 @@ def semantic_check_with_clip(image, model, preprocess, device):
     return labels[np.argmax(probs)], max(probs)
 
 def extract_exif_data(image):
+    """
+    Extracts basic EXIF metadata from a PIL Image.
+    Returns a dict with Make, Model, DateTimeOriginal, and full GPSInfo (if present).
+    """
     try:
         exif_dict = piexif.load(image.info.get("exif", b""))
         exif_clean = {}
+
+        # Camera make & model
         if "0th" in exif_dict:
-            exif_clean["Make"] = exif_dict["0th"].get(piexif.ImageIFD.Make, b"").decode("utf-8", "ignore")
-            exif_clean["Model"] = exif_dict["0th"].get(piexif.ImageIFD.Model, b"").decode("utf-8", "ignore")
+            exif_clean["Make"] = exif_dict["0th"].get(piexif.ImageIFD.Make, b"").decode("utf-8", "ignore").strip()
+            exif_clean["Model"] = exif_dict["0th"].get(piexif.ImageIFD.Model, b"").decode("utf-8", "ignore").strip()
+
+        # Original capture date/time
         if "Exif" in exif_dict:
-            exif_clean["DateTimeOriginal"] = exif_dict["Exif"].get(piexif.ExifIFD.DateTimeOriginal, b"").decode("utf-8", "ignore")
+            exif_clean["DateTimeOriginal"] = exif_dict["Exif"].get(piexif.ExifIFD.DateTimeOriginal, b"").decode("utf-8", "ignore").strip()
+
+        # Keep full GPSInfo block for later decoding
         if "GPS" in exif_dict:
             exif_clean["GPSInfo"] = exif_dict["GPS"]
+
         return exif_clean
+
     except Exception as e:
-        return {"Error": f"Failed to extract EXIF data: {e}"}
+        return {"Error": f"Failed to extract EXIF data: {str(e)}"}
+
 
 def decode_gps(exif_gps):
     try:
-        lat_ref = exif_gps.get(1).decode()
-        lat = exif_gps.get(2)
-        lon_ref = exif_gps.get(3).decode()
+        if not exif_gps:
+            return None, None
+
+        lat_ref = exif_gps.get(1)  # 'N' or 'S'
+        lat = exif_gps.get(2)      # ((degrees, 1), (minutes, 1), (seconds, 1))
+        lon_ref = exif_gps.get(3)  # 'E' or 'W'
         lon = exif_gps.get(4)
-        def convert(coord):
-            d, m, s = coord
+
+        if None in (lat_ref, lat, lon_ref, lon):
+            return None, None
+
+        def dms_to_decimal(dms):
+            d, m, s = dms
             return d[0]/d[1] + (m[0]/m[1])/60 + (s[0]/s[1])/3600
-        latitude = convert(lat)
-        longitude = convert(lon)
-        if lat_ref == 'S':
+
+        latitude = dms_to_decimal(lat)
+        longitude = dms_to_decimal(lon)
+
+        if lat_ref.decode("utf-8", "ignore") == 'S':
             latitude *= -1
-        if lon_ref == 'W':
+        if lon_ref.decode("utf-8", "ignore") == 'W':
             longitude *= -1
+
         return round(latitude, 6), round(longitude, 6)
+
     except Exception:
         return None, None
+# Display basic metadata
+st.markdown("### 🧾 Metadata (EXIF)")
+for key, value in metadata.items():
+    if key != "GPSInfo" and key != "Error":
+        st.markdown(f"**{key}**: {value}")
+    elif key == "Error":
+        st.error(value)
 
+# GPS handling
+gps_lat, gps_lon = decode_gps(metadata.get("GPSInfo"))
+if gps_lat is not None and gps_lon is not None:
+    maps_url = f"https://www.google.com/maps?q={gps_lat},{gps_lon}"
+    st.markdown(
+        f"📍 **Picture was likely taken here:** "
+        f"[View on Google Maps]({maps_url})",
+        unsafe_allow_html=True
+    )
+    st.caption(f"Coordinates: {gps_lat:.6f}, {gps_lon:.6f}")
+else:
+    st.markdown("📍 **No valid GPS coordinates found in metadata.**")
 # ────────────────────────────────────────────────
 # UI STARTS HERE
 # ────────────────────────────────────────────────
@@ -149,12 +192,26 @@ st.title("🤖 VeritasAI")
 st.markdown("""
 <small>
 <p><strong>Designed & Created by Brandon Hicks</strong><br>
-A.I. Ambassador | Ethical AI Developer</p>
+Ethical AI Developer</p>
 </small>
 ---
-📜 **Ethical Frameworks Applied**  
-- **Deontological Ethics** — rooted in principles of truth, transparency, and duty-based analysis.  
-- **Transparency & Explainability** — empowering users with meaningful, interpretable insights.
+📜st.markdown("""
+### What VeritasAI Does
+VeritasAI is an ethical AI-powered analyzer that helps you quickly evaluate text and images for authenticity, bias, and potential manipulation.
+
+- **Text Analysis**: Detects sentiment, toxicity levels, and neutrality — with visual gauges and breakdowns to make insights clear and actionable.
+- **Image Analysis**: Checks for signs of AI generation (via CLIP semantics + smoothness detection), extracts camera metadata (make/model/date), and shows GPS location (if embedded) on Google Maps.
+
+All processing happens in your browser session — no data is stored or shared.
+
+### How to Use It
+1. Choose **Text** or **Image** mode using the toggle above.
+2. For text: Paste or type content → click **Analyze Text** → review sentiment gauge, toxicity chart, and neutrality score.
+3. For images: Upload a photo (JPG/PNG) → wait a moment → see authenticity verdict, metadata summary, GPS link (if available), and visual flags.
+
+Upload responsibly — use only images/text you have rights to analyze.
+
+""")
 ---
 """, unsafe_allow_html=True)
 
