@@ -26,6 +26,16 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
+with st.sidebar:
+    st.markdown("### VeritasAI")
+    st.markdown("**AI Image & Text Authenticity Checker**")
+    st.markdown("**Created by Brandon Hicks**  \nA.I. Developer")
+    st.markdown("---")
+    st.markdown("**How to use**")
+    st.markdown("- Choose Text or Image mode")
+    st.markdown("- Upload or paste content")
+    st.markdown("- Review results & signals")
+
 # ────────────────────────────────────────────────
 # CACHED MODELS
 # ────────────────────────────────────────────────
@@ -159,6 +169,14 @@ def error_level_analysis(image, quality=90):
 # MAIN UI
 # ────────────────────────────────────────────────
 st.title("🤖 VeritasAI")
+
+st.markdown("""
+**AI-powered image & text analyzer**  
+Created by **Brandon Hicks** — A.I. Developer
+""", unsafe_allow_html=True)
+
+# Optional one-liner instructions (keep very short)
+st.caption("Upload an image or paste text to check for signs of AI generation or manipulation.")
 
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
