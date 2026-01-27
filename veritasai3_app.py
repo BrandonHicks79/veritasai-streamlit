@@ -12,6 +12,10 @@ import os
 import torchvision.transforms as transforms
 import piexif
 import clip
+import imquality.brisque as brisque
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)  # BRISQUE can be noisy
 
 # ────────────────────────────────────────────────
 # PAGE CONFIG – MUST BE FIRST STREAMLIT CALL
@@ -26,7 +30,6 @@ st.set_page_config(
 # ────────────────────────────────────────────────
 # CACHED MODELS
 # ────────────────────────────────────────────────
-
 @st.cache_resource(show_spinner="Loading Detoxify...", ttl="2h")
 def get_detoxify():
     from detoxify import Detoxify
@@ -46,6 +49,12 @@ def get_clip():
     model, preprocess = clip.load("ViT-B/32", device=device)
     return model, preprocess, device
 
+@st.cache_resource(show_spinner="Loading AI Image Detector...", ttl="2h")
+def get_ai_image_detector():
+    # Modern open-source detector (SigLIP-based, fine-tuned on 60k real + 60k AI images)
+    # Good balance of accuracy vs speed on CPU in 2026
+    return pipeline("image-classification", model="Ateeqq/ai-vs-human-image-detector")
+
 @st.cache_resource
 def download_nltk_data():
     nltk.download('vader_lexicon', quiet=True)
@@ -56,7 +65,6 @@ download_nltk_data()
 # ────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ────────────────────────────────────────────────
-
 def extract_exif_data(image):
     try:
         exif_dict = piexif.load(image.info.get("exif", b""))
@@ -82,19 +90,15 @@ def decode_gps(exif_gps):
         lon = exif_gps.get(4)
         if None in (lat_ref, lat, lon_ref, lon):
             return None, None
-
         def dms_to_decimal(dms):
             d, m, s = dms
             return d[0]/d[1] + (m[0]/m[1])/60 + (s[0]/s[1])/3600
-
         latitude = dms_to_decimal(lat)
         longitude = dms_to_decimal(lon)
-
         if lat_ref.decode("utf-8", "ignore") == 'S':
             latitude *= -1
         if lon_ref.decode("utf-8", "ignore") == 'W':
             longitude *= -1
-
         return round(latitude, 6), round(longitude, 6)
     except Exception:
         return None, None
@@ -130,12 +134,13 @@ def plot_sentiment_gauge_dynamic(score, sentiment_label):
 
 def detect_blur_or_smoothness(image):
     gray = cv2.cvtColor(np.array(image.convert("L")), cv2.COLOR_GRAY2BGR)
-    return cv2.Laplacian(gray, cv2.CV_64F).var() < 100
+    var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return var < 80  # Relaxed for modern generators
 
 def detect_noise_level(image):
     gray = np.array(image.convert("L"))
     noise_std = np.std(gray)
-    return noise_std < 10  # Tune this threshold after testing
+    return noise_std < 12  # Adjusted for subtle noise in newer models
 
 def error_level_analysis(image, quality=90):
     buf = io.BytesIO()
@@ -150,38 +155,29 @@ def error_level_analysis(image, quality=90):
             ela_image.putpixel((x, y), (abs(r - rr)*2, abs(g - gg)*2, abs(b - bb)*2))
     ela_array = np.array(ela_image)
     ela_variance = np.var(ela_array)
-    return ela_variance < 50  # Tune after testing
+    return ela_variance < 50
 
-def semantic_check_with_clip(image, model, preprocess, device):
-    inputs = preprocess(image).unsqueeze(0).to(device)
-    tokens = clip.tokenize(["a real photo", "an AI-generated image"]).to(device)
-    with torch.no_grad():
-        probs = model(inputs, tokens)[0].softmax(dim=-1).cpu().numpy()[0]
-    labels = ["a real photo", "an AI-generated image"]
-    return labels[np.argmax(probs)], max(probs)
+def compute_brisque_score(image):
+    try:
+        score = brisque.score(np.array(image))
+        return round(score, 2)
+    except Exception:
+        return None
 
 # ────────────────────────────────────────────────
 # MAIN UI
 # ────────────────────────────────────────────────
-
 st.title("🤖 VeritasAI")
-
 st.markdown("""
 ### What VeritasAI Does
 VeritasAI is an ethical AI-powered analyzer that helps you quickly evaluate text and images for authenticity, bias, and potential manipulation.
-
-- **Text Analysis**: Detects sentiment, toxicity levels, and neutrality - with visual gauges and breakdowns to make insights clear and actionable.
-- **Image Analysis**: Checks for signs of AI generation (via CLIP semantics + smoothness detection), extracts camera metadata (make/model/date), and shows GPS location (if embedded) on Google Maps.
-
-All processing happens in your browser session - no data is stored or shared.
-
+- **Text Analysis**: Detects sentiment, toxicity levels, and neutrality - with visual gauges and breakdowns.
+- **Image Analysis**: Uses modern AI detectors + heuristics + metadata to flag generated/enhanced images.
+All processing is local to your session — no data stored or shared.
 ### How to Use It
-1. Choose **Text** or **Image** mode using the toggle above.
-2. For text: Paste or type content → click **Analyze Text** → review sentiment gauge, toxicity chart, and neutrality score.
-3. For images: Upload a photo (JPG/PNG) → wait a moment → see authenticity verdict, metadata summary, GPS link (if available), and visual flags.
-
-Upload responsibly - use only images/text you have rights to analyze.
-
+1. Choose **Text** or **Image** mode.
+2. Upload or paste content → analyze → review results.
+Upload responsibly — use only content you have rights to analyze.
 ---
 **Designed & Created by Brandon Hicks**  
 A.I. Ambassador | Ethical AI Developer
@@ -197,15 +193,13 @@ if mode == "Text":
             st.markdown(f"**Sentiment:** `{sentiment['label']}` (Confidence: `{sentiment['score']:.2f}`)")
             gauge_image = plot_sentiment_gauge_dynamic(sentiment['score'], sentiment['label'])
             st.image(gauge_image, caption="Sentiment Gauge", use_container_width=True)
-
             toxicity = get_detoxify().predict(text_input)
             st.image(plot_toxicity(toxicity), caption="Toxicity Scores", use_container_width=True)
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
     if uploaded_file:
-        with st.spinner("Processing image..."):
+        with st.spinner("Processing image (metadata + AI detection ensemble)..."):
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_container_width=True)
 
@@ -218,44 +212,101 @@ elif mode == "Image":
                 for key, value in metadata.items():
                     if key != "GPSInfo":
                         st.markdown(f"**{key}**: {value}")
+                gps_lat, gps_lon = decode_gps(metadata.get("GPSInfo"))
+                if gps_lat is not None and gps_lon is not None:
+                    maps_url = f"https://www.google.com/maps?q={gps_lat},{gps_lon}&z=16"
+                    st.markdown(f"📍 **Likely taken here:** [Google Maps ↗]({maps_url})")
+                    st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
+                else:
+                    st.markdown("📍 **No valid GPS coordinates found.**")
 
-            # GPS
-            gps_lat, gps_lon = decode_gps(metadata.get("GPSInfo"))
-            if gps_lat is not None and gps_lon is not None:
-                maps_url = f"https://www.google.com/maps?q={gps_lat},{gps_lon}&z=16"
-                st.markdown(
-                    f"📍 **Picture was likely taken here:** "
-                    f"[View on Google Maps ↗]({maps_url})",
-                    unsafe_allow_html=True
-                )
-                st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
+            # ── AI Detection ──
+            st.markdown("### 🔍 AI-Generation Analysis")
+
+            # 1. Modern HF detector
+            detector = get_ai_image_detector()
+            detector_results = detector(image)
+            ai_prob = 0.0
+            main_label = "UNKNOWN"
+            for res in detector_results:
+                label_lower = res['label'].lower()
+                if 'ai' in label_lower or 'generated' in label_lower or 'fake' in label_lower:
+                    ai_prob = res['score']
+                    main_label = res['label']
+                    break
+                elif 'human' in label_lower or 'real' in label_lower or 'authentic' in label_lower:
+                    ai_prob = 1 - res['score']
+                    main_label = "REAL (inverted)"
+                    break
+            st.markdown(f"**AI vs Human Detector**: {main_label} (AI probability: **{ai_prob:.1%}**)")
+
+            # 2. BRISQUE
+            brisque_score = compute_brisque_score(image)
+            brisque_flag = brisque_score is not None and brisque_score > 35
+            if brisque_score is not None:
+                st.markdown(f"**BRISQUE Score**: {brisque_score:.2f}  "
+                            f"{'⚠️ Unnatural quality (common in AI)' if brisque_flag else '✅ Appears natural'}")
             else:
-                st.markdown("📍 **No valid GPS coordinates found in metadata.**")
+                st.markdown("BRISQUE: Computation failed")
 
-            # ── AI Detection Signals ──
-            clip_model, clip_preprocess, clip_device = get_clip()
-            label, conf = semantic_check_with_clip(image, clip_model, clip_preprocess, clip_device)
-            st.markdown(f"🧠 CLIP Verdict: **{label}** (Confidence: `{conf:.2f}`)")
-
+            # 3. Heuristics
             blur_flag = detect_blur_or_smoothness(image)
-            st.markdown("⚠️ Image may be overly smooth." if blur_flag else "✅ No over-smoothing detected.")
-
             low_noise_flag = detect_noise_level(image)
-            st.markdown("⚠️ Suspiciously low noise levels detected." if low_noise_flag else "✅ Normal noise levels.")
-
             ela_flag = error_level_analysis(image)
-            st.markdown("⚠️ Uniform compression artifacts (possible AI)." if ela_flag else "✅ Varied compression (likely real).")
 
-            # ── Final Verdict ──
-            metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
-            flags = [blur_flag, low_noise_flag, ela_flag]
-            ai_flags_count = sum(flags)
+            st.markdown("⚠️ Overly smooth regions detected." if blur_flag else "✅ No excessive smoothing.")
+            st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
+            st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
 
-            if label.lower().startswith("an ai") or conf < 0.5 or ai_flags_count >= 2 or metadata_confidence < 1:
-                verdict = "🔴 Likely AI-Generated or Enhanced"
-            elif ai_flags_count == 1:
-                verdict = "⚠️ Suspicious – Possible Manipulation"
+            # ── Ensemble Verdict ──
+            ai_signals = 0.0
+            reasons = []
+
+            if ai_prob > 0.70:
+                ai_signals += 3.0
+                reasons.append(f"Strong detector match ({ai_prob:.0%} AI)")
+            elif ai_prob > 0.45:
+                ai_signals += 1.5
+                reasons.append(f"Moderate AI suspicion ({ai_prob:.0%})")
+
+            if brisque_flag and brisque_score is not None:
+                ai_signals += 1.0
+                reasons.append(f"BRISQUE too high ({brisque_score})")
+
+            if blur_flag:
+                ai_signals += 0.8
+                reasons.append("Over-smoothing")
+            if low_noise_flag:
+                ai_signals += 0.8
+                reasons.append("Unnaturally low noise")
+            if ela_flag:
+                ai_signals += 0.8
+                reasons.append("Uniform ELA")
+
+            if not (metadata.get("Make") and metadata.get("Model")):
+                ai_signals += 0.5
+                reasons.append("Missing camera metadata")
+
+            # Final decision
+            if ai_signals >= 4.0:
+                verdict = "🔴 **Very likely AI-generated**"
+                color = "red"
+            elif ai_signals >= 2.5:
+                verdict = "🟠 **Probably AI or heavily edited**"
+                color = "orange"
+            elif ai_signals >= 1.0:
+                verdict = "🟡 **Somewhat suspicious – mixed signals**"
+                color = "yellow"
             else:
-                verdict = "✅ Likely Real"
+                verdict = "✅ **Most likely real photograph**"
+                color = "green"
 
-            st.markdown(f"### Final Verdict: {verdict}")
+            st.markdown(f"### Final Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+            st.markdown(f"**Total AI Signal Score**: {ai_signals:.1f}")
+
+            if reasons:
+                st.markdown("**Reasons / Flags:**")
+                for r in reasons:
+                    st.markdown(f"- {r}")
+            else:
+                st.markdown("No major suspicious signals detected.")
