@@ -12,7 +12,7 @@ import os
 import torchvision.transforms as transforms
 import piexif
 import clip
-import imquality.brisque as brisque
+import brisque  # ← Changed to correct package
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)  # BRISQUE can be noisy
@@ -51,8 +51,6 @@ def get_clip():
 
 @st.cache_resource(show_spinner="Loading AI Image Detector...", ttl="2h")
 def get_ai_image_detector():
-    # Modern open-source detector (SigLIP-based, fine-tuned on 60k real + 60k AI images)
-    # Good balance of accuracy vs speed on CPU in 2026
     return pipeline("image-classification", model="Ateeqq/ai-vs-human-image-detector")
 
 @st.cache_resource
@@ -135,12 +133,12 @@ def plot_sentiment_gauge_dynamic(score, sentiment_label):
 def detect_blur_or_smoothness(image):
     gray = cv2.cvtColor(np.array(image.convert("L")), cv2.COLOR_GRAY2BGR)
     var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    return var < 80  # Relaxed for modern generators
+    return var < 80
 
 def detect_noise_level(image):
     gray = np.array(image.convert("L"))
     noise_std = np.std(gray)
-    return noise_std < 12  # Adjusted for subtle noise in newer models
+    return noise_std < 12
 
 def error_level_analysis(image, quality=90):
     buf = io.BytesIO()
@@ -159,9 +157,11 @@ def error_level_analysis(image, quality=90):
 
 def compute_brisque_score(image):
     try:
-        score = brisque.score(np.array(image))
+        # Use the correct function from brisque package
+        score = brisque.brisque_score(np.array(image))  # or brisque.score(...) in some versions
         return round(score, 2)
-    except Exception:
+    except Exception as e:
+        st.warning(f"BRISQUE computation failed: {str(e)}")
         return None
 
 # ────────────────────────────────────────────────
@@ -230,17 +230,17 @@ elif mode == "Image":
             main_label = "UNKNOWN"
             for res in detector_results:
                 label_lower = res['label'].lower()
-                if 'ai' in label_lower or 'generated' in label_lower or 'fake' in label_lower:
+                if 'ai' in label_lower or 'generated' in label_lower or 'fake' in label_lower or 'synthetic' in label_lower:
                     ai_prob = res['score']
                     main_label = res['label']
                     break
-                elif 'human' in label_lower or 'real' in label_lower or 'authentic' in label_lower:
+                elif 'real' in label_lower or 'human' in label_lower or 'authentic' in label_lower or 'photo' in label_lower:
                     ai_prob = 1 - res['score']
                     main_label = "REAL (inverted)"
                     break
             st.markdown(f"**AI vs Human Detector**: {main_label} (AI probability: **{ai_prob:.1%}**)")
 
-            # 2. BRISQUE
+            # 2. BRISQUE (fixed)
             brisque_score = compute_brisque_score(image)
             brisque_flag = brisque_score is not None and brisque_score > 35
             if brisque_score is not None:
