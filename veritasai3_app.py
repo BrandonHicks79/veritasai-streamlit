@@ -28,12 +28,12 @@ st.set_page_config(
 
 with st.sidebar:
     st.markdown("### VeritasAI")
-    st.markdown("**AI Image & Text Authenticity Checker**")
+    st.markdown("**AI Image & Text Analyzer**")
     st.markdown("**Created by Brandon Hicks**  \nA.I. Developer")
     st.markdown("---")
     st.markdown("**How to use**")
     st.markdown("- Choose Text or Image mode")
-    st.markdown("- Upload or paste content")
+    st.markdown("- Upload image from device or paste text")
     st.markdown("- Review results & signals")
 
 # ────────────────────────────────────────────────
