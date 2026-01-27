@@ -11,3 +11,4 @@ Pillow
 matplotlib
 numpy
 piexif
+image-quality
