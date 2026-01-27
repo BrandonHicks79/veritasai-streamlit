@@ -12,13 +12,13 @@ import os
 import torchvision.transforms as transforms
 import piexif
 import clip
-import brisque  # ← Changed to correct package
+import imquality.brisque as brisque  # ← Reliable BRISQUE implementation
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)  # BRISQUE can be noisy
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # ────────────────────────────────────────────────
-# PAGE CONFIG – MUST BE FIRST STREAMLIT CALL
+# PAGE CONFIG
 # ────────────────────────────────────────────────
 st.set_page_config(
     page_title="VeritasAI - Image & Text Analyzer",
@@ -28,7 +28,7 @@ st.set_page_config(
 )
 
 # ────────────────────────────────────────────────
-# CACHED MODELS
+# CACHED MODELS (unchanged)
 # ────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading Detoxify...", ttl="2h")
 def get_detoxify():
@@ -157,15 +157,14 @@ def error_level_analysis(image, quality=90):
 
 def compute_brisque_score(image):
     try:
-        # Use the correct function from brisque package
-        score = brisque.brisque_score(np.array(image))  # or brisque.score(...) in some versions
+        score = brisque.score(np.array(image))  # Works with numpy RGB array
         return round(score, 2)
     except Exception as e:
         st.warning(f"BRISQUE computation failed: {str(e)}")
         return None
 
 # ────────────────────────────────────────────────
-# MAIN UI
+# MAIN UI (unchanged from previous version)
 # ────────────────────────────────────────────────
 st.title("🤖 VeritasAI")
 st.markdown("""
@@ -230,17 +229,17 @@ elif mode == "Image":
             main_label = "UNKNOWN"
             for res in detector_results:
                 label_lower = res['label'].lower()
-                if 'ai' in label_lower or 'generated' in label_lower or 'fake' in label_lower or 'synthetic' in label_lower:
+                if any(k in label_lower for k in ['ai', 'generated', 'fake', 'synthetic']):
                     ai_prob = res['score']
                     main_label = res['label']
                     break
-                elif 'real' in label_lower or 'human' in label_lower or 'authentic' in label_lower or 'photo' in label_lower:
+                elif any(k in label_lower for k in ['real', 'human', 'authentic', 'photo']):
                     ai_prob = 1 - res['score']
                     main_label = "REAL (inverted)"
                     break
             st.markdown(f"**AI vs Human Detector**: {main_label} (AI probability: **{ai_prob:.1%}**)")
 
-            # 2. BRISQUE (fixed)
+            # 2. BRISQUE
             brisque_score = compute_brisque_score(image)
             brisque_flag = brisque_score is not None and brisque_score > 35
             if brisque_score is not None:
