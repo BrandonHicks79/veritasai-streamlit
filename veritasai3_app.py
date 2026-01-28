@@ -249,8 +249,7 @@ elif mode == "Image":
                     st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
                 else:
                     st.markdown("📍 **No valid GPS coordinates found.**")
-        else:
-        st.info("Upload an image to check for signs of AI generation/manipulation.")
+      
 
 
             # ── AI Detection ──
