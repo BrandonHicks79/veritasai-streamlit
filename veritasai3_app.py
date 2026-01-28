@@ -13,6 +13,9 @@ import torchvision.transforms as transforms
 import piexif
 import clip
 import warnings
+import wikipedia
+import re
+from difflib import SequenceMatcher
 from sentence_transformers import CrossEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -77,6 +80,86 @@ download_nltk_data()
 # ────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ────────────────────────────────────────────────
+def wikipedia_fact_check(claim: str, max_sentences: int = 5, similarity_threshold: float = 0.6) -> tuple[str, str, float]:
+    """
+    Attempts to verify a factual claim using Wikipedia.
+    Returns: (verdict, explanation, confidence)
+    - verdict: "Supported", "Refuted", "Insufficient", "Error"
+    - explanation: human-readable reason + source snippet
+    - confidence: 0.0 to 1.0
+    """
+    claim = claim.strip().rstrip('.!?')  # clean up
+    if not claim:
+        return "Insufficient", "No claim provided.", 0.0
+
+    try:
+        # Step 1: Try to find the most relevant page (auto-suggest helps with typos)
+        wikipedia.set_lang("en")  # or make configurable later
+        page = wikipedia.page(claim, auto_suggest=True, redirect=True)
+
+        # Step 2: Get summary (first few sentences — often contains key facts)
+        summary = wikipedia.summary(claim, sentences=max_sentences)
+
+        # Step 3: Simple heuristic matching
+        # Normalize texts: lower, remove punctuation, extra spaces
+        norm_claim = re.sub(r'\W+', ' ', claim.lower()).strip()
+        norm_summary = re.sub(r'\W+', ' ', summary.lower()).strip()
+
+        # Fuzzy similarity (good for paraphrasing)
+        matcher = SequenceMatcher(None, norm_claim, norm_summary)
+        similarity = matcher.ratio()
+
+        # Check if claim keywords appear in summary
+        claim_words = set(norm_claim.split())
+        summary_words = set(norm_summary.split())
+        overlap = len(claim_words.intersection(summary_words)) / len(claim_words) if claim_words else 0
+
+        # Combine signals
+        combined_score = (similarity + overlap) / 2
+
+        if combined_score >= similarity_threshold:
+            verdict = "Supported"
+            conf = min(0.95, combined_score + 0.1)  # slight boost if match
+            snippet = summary[:250] + "..." if len(summary) > 250 else summary
+            explanation = f"Supported by Wikipedia: \"{snippet}\" (from page: {page.title})"
+        elif "not" in norm_claim or "false" in norm_claim or "no " in norm_claim:
+            # Rough negation check — could be improved
+            if combined_score > 0.3:  # some relevance but claim says "not"
+                verdict = "Refuted"
+                conf = min(0.9, 0.4 + combined_score)
+                explanation = f"Appears refuted — Wikipedia describes the opposite: \"{summary[:200]}...\""
+            else:
+                verdict = "Insufficient"
+                conf = 0.4
+                explanation = "No strong match found to confirm or refute."
+        else:
+            verdict = "Insufficient"
+            conf = combined_score
+            explanation = f"Could not clearly confirm. Wikipedia says: \"{summary[:200]}...\" (page: {page.title})"
+
+        return verdict, explanation, round(conf, 2)
+
+    except wikipedia.DisambiguationError as e:
+        # Could pick the first option or show options to user, but for simplicity:
+        try:
+            page = wikipedia.page(e.options[0])  # take first suggestion
+            return wikipedia_fact_check(claim)  # recurse with better title
+        except:
+            return "Insufficient", f"Ambiguous topic — possible pages: {', '.join(e.options[:3])}", 0.3
+
+    except wikipedia.PageError:
+        # Try searching instead of direct page
+        try:
+            search_results = wikipedia.search(claim, results=1)
+            if search_results:
+                return wikipedia_fact_check(search_results[0])  # try again with suggested title
+            else:
+                return "Insufficient", "No relevant Wikipedia page found.", 0.2
+        except:
+            return "Error", "Wikipedia search failed.", 0.0
+
+    except Exception as e:
+        return "Error", f"Unexpected error: {str(e)}", 0.0
 def extract_exif_data(image):
     try:
         exif_dict = piexif.load(image.info.get("exif", b""))
@@ -185,47 +268,67 @@ mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
     st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
-   
+  
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use internal model knowledge (less reliable).",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use Wikipedia lookup.",
                             height=150)
 
-    if claim.strip():  # Only run when user entered something meaningful
+    if claim.strip():
         with st.spinner("Analyzing claim..."):
-            nli_model = get_nli_fact_checker()
-           
-            if not evidence.strip():
-                evidence = "No external evidence provided; relying on model pre-training (may be inaccurate)."
-                st.warning("No evidence given → results are approximate and may hallucinate.")
-           
-            # Input as (hypothesis, premise) = (claim, evidence)
-            scores = nli_model.predict([(claim, evidence)])
-            probs = scores[0]
-           
-            label_idx = probs.argmax()
-            label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
-            score = probs[label_idx]
-           
-            if label == "ENTAILMENT":
-                verdict = "✅ **Supported** (evidence entails the claim)"
-                color = "green"
-            elif label == "CONTRADICTION":
-                verdict = "❌ **Refuted** (evidence contradicts the claim)"
-                color = "red"
-            else:
-                verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
-                color = "gray"
-           
-            st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
-            st.markdown(f"**Confidence**: {score:.2%}")
-            st.markdown(f"**Raw label**: {label}")
-            st.caption(f"**Breakdown** — Entailment: {probs[1]:.1%} | Contradiction: {probs[0]:.1%} | Neutral: {probs[2]:.1%}")
-            st.caption(f"Checked claim: **{claim}**")
-            st.caption(f"Against evidence: **{evidence}**")
-    else:
-        st.info("Enter a claim to start fact-checking.")
+            if evidence.strip():
+                # --- NLI path when evidence provided ---
+                nli_model = get_nli_fact_checker()
+                # No need for fallback evidence text anymore since real evidence exists
+                scores = nli_model.predict([(claim, evidence)])
+                probs = scores[0]
+                label_idx = probs.argmax()
+                label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
+                score = probs[label_idx]
 
+                if label == "ENTAILMENT":
+                    verdict = "✅ **Supported** (evidence entails the claim)"
+                    color = "green"
+                elif label == "CONTRADICTION":
+                    verdict = "❌ **Refuted** (evidence contradicts the claim)"
+                    color = "red"
+                else:
+                    verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
+                    color = "gray"
+
+                st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {score:.2%}")
+                st.markdown(f"**Raw label**: {label}")
+                st.caption(f"**Breakdown** — Entailment: {probs[1]:.1%} | Contradiction: {probs[0]:.1%} | Neutral: {probs[2]:.1%}")
+                st.caption(f"Checked claim: **{claim}**")
+                st.caption(f"Against evidence: **{evidence}**")
+
+            else:
+                # --- Wikipedia path when no evidence ---
+                verdict, explanation, confidence = wikipedia_fact_check(claim)
+
+                if verdict == "Supported":
+                    color = "green"
+                    icon = "✅"
+                elif verdict == "Refuted":
+                    color = "red"
+                    icon = "❌"
+                elif verdict == "Insufficient":
+                    color = "gray"
+                    icon = "⚪"
+                else:
+                    color = "orange"
+                    icon = "⚠️"
+
+                st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {confidence:.0%}")
+                st.markdown(f"**Explanation**: {explanation}")
+                if "page:" in explanation:
+                    try:
+                        page_title = explanation.split("page: ")[-1].strip(")")
+                        st.caption(f"Source: [Wikipedia - {page_title}](https://en.wikipedia.org/wiki/{page_title.replace(' ', '_')})")
+                    except:
+                        st.caption("Source: Wikipedia (link extraction failed)")
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
