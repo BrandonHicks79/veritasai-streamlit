@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 import piexif
 import clip
 import warnings
+from sentence_transformers import CrossEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -51,7 +52,10 @@ def get_sentiment_pipeline():
         model="distilbert-base-uncased-finetuned-sst-2-english",
         device="cpu"
     )
-
+@st.cache_resource(show_spinner="Loading NLI fact-check model...", ttl="2h")
+def get_nli_fact_checker():
+    return CrossEncoder('cross-encoder/nli-deberta-v3-base', device='cpu')  
+    )
 @st.cache_resource(show_spinner="Loading CLIP...", ttl="2h")
 def get_clip():
     device = "cpu"
@@ -168,27 +172,61 @@ def error_level_analysis(image, quality=90):
 # ────────────────────────────────────────────────
 # MAIN UI
 # ────────────────────────────────────────────────
-st.title("🌐 🕸️ VeritasAI")
+st.title("🌐  VeritasAI 🔍")
 
 st.markdown("""
-**Text and image analyzer
+Building intelligence in machines while searching for truth in life
 """, unsafe_allow_html=True)
 
 # Optional one-liner instructions (keep very short)
-st.caption("Upload an image to check for signs of AI generation, manipulation or paste text to determine bias-based language.")
+st.caption("Upload an image to check for signs of AI generation, manipulation or paste text to fact-check.")
 
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
-    text_input = st.text_area("Enter text to analyze:")
-    if st.button("Analyze Text") and text_input:
-        with st.spinner("Analyzing text..."):
-            sentiment = get_sentiment_pipeline()(text_input)[0]
-            st.markdown(f"**Sentiment:** `{sentiment['label']}` (Confidence: `{sentiment['score']:.2f}`)")
-            gauge_image = plot_sentiment_gauge_dynamic(sentiment['score'], sentiment['label'])
-            st.image(gauge_image, caption="Sentiment Gauge", use_container_width=True)
-            toxicity = get_detoxify().predict(text_input)
-            st.image(plot_toxicity(toxicity), caption="Toxicity Scores", use_container_width=True)
+    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
+    
+    claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
+    evidence = st.text_area("Evidence or context (optional but improves accuracy):", 
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower on the Champ de Mars in Paris, France.'\n\nLeave blank to use internal model knowledge (less reliable).",
+                            height=150)
+    
+ nli_model = get_nli_fact_checker()
+            
+            if not evidence.strip():
+                evidence = "No external evidence provided; relying on model pre-training (may be inaccurate)."
+                st.warning("No evidence given → results are approximate and may hallucinate.")
+            
+            # Input as (claim/hypothesis, evidence/premise) tuple
+            # Note: In NLI, "premise" is the evidence/context, "hypothesis" is the claim to verify
+            scores = nli_model.predict([(claim, evidence)])  # returns [[contradiction, entailment, neutral]] probabilities
+            probs = scores[0]  # array of 3 floats summing to ~1
+            
+            # Labels in order: 0=contradiction, 1=entailment, 2=neutral
+            label_idx = probs.argmax()
+            label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
+            score = probs[label_idx]  # confidence for the top class
+            
+            # Map to verdict (same as before)
+            if label == "ENTAILMENT":
+                verdict = "✅ **Supported** (evidence entails the claim)"
+                color = "green"
+            elif label == "CONTRADICTION":
+                verdict = "❌ **Refuted** (evidence contradicts the claim)"
+                color = "red"
+            else:
+                verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
+                color = "gray"
+            
+            st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+            st.markdown(f"**Confidence**: {score:.2%}")
+            st.markdown(f"**Raw label**: {label}")
+            
+            # Bonus: Show breakdown for transparency
+            st.caption(f"**Breakdown** — Entailment: {probs[1]:.1%} | Contradiction: {probs[0]:.1%} | Neutral: {probs[2]:.1%}")
+            
+            st.caption(f"Checked claim: **{claim}**")
+            st.caption(f"Against evidence: **{evidence}**")
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
