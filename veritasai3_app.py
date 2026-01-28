@@ -55,7 +55,7 @@ def get_sentiment_pipeline():
 @st.cache_resource(show_spinner="Loading NLI fact-check model...", ttl="2h")
 def get_nli_fact_checker():
     return CrossEncoder('cross-encoder/nli-deberta-v3-base', device='cpu')  
-    )
+    
 @st.cache_resource(show_spinner="Loading CLIP...", ttl="2h")
 def get_clip():
     device = "cpu"
@@ -185,29 +185,28 @@ mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
     st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
-    
+   
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
-    evidence = st.text_area("Evidence or context (optional but improves accuracy):", 
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower on the Champ de Mars in Paris, France.'\n\nLeave blank to use internal model knowledge (less reliable).",
+    evidence = st.text_area("Evidence or context (optional but improves accuracy):",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use internal model knowledge (less reliable).",
                             height=150)
-    
- nli_model = get_nli_fact_checker()
-            
+
+    if claim.strip():  # Only run when user entered something meaningful
+        with st.spinner("Analyzing claim..."):
+            nli_model = get_nli_fact_checker()
+           
             if not evidence.strip():
                 evidence = "No external evidence provided; relying on model pre-training (may be inaccurate)."
                 st.warning("No evidence given → results are approximate and may hallucinate.")
-            
-            # Input as (claim/hypothesis, evidence/premise) tuple
-            # Note: In NLI, "premise" is the evidence/context, "hypothesis" is the claim to verify
-            scores = nli_model.predict([(claim, evidence)])  # returns [[contradiction, entailment, neutral]] probabilities
-            probs = scores[0]  # array of 3 floats summing to ~1
-            
-            # Labels in order: 0=contradiction, 1=entailment, 2=neutral
+           
+            # Input as (hypothesis, premise) = (claim, evidence)
+            scores = nli_model.predict([(claim, evidence)])
+            probs = scores[0]
+           
             label_idx = probs.argmax()
             label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
-            score = probs[label_idx]  # confidence for the top class
-            
-            # Map to verdict (same as before)
+            score = probs[label_idx]
+           
             if label == "ENTAILMENT":
                 verdict = "✅ **Supported** (evidence entails the claim)"
                 color = "green"
@@ -217,16 +216,15 @@ if mode == "Text":
             else:
                 verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
                 color = "gray"
-            
+           
             st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
             st.markdown(f"**Confidence**: {score:.2%}")
             st.markdown(f"**Raw label**: {label}")
-            
-            # Bonus: Show breakdown for transparency
             st.caption(f"**Breakdown** — Entailment: {probs[1]:.1%} | Contradiction: {probs[0]:.1%} | Neutral: {probs[2]:.1%}")
-            
             st.caption(f"Checked claim: **{claim}**")
             st.caption(f"Against evidence: **{evidence}**")
+    else:
+        st.info("Enter a claim to start fact-checking.")
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
