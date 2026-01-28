@@ -15,6 +15,8 @@ import clip
 import warnings
 import wikipedia
 import re
+import requests
+import json
 from difflib import SequenceMatcher
 from sentence_transformers import CrossEncoder
 
@@ -80,6 +82,56 @@ download_nltk_data()
 # ────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ────────────────────────────────────────────────
+def google_fact_check(claim: str, language: str = "en", max_results: int = 3) -> tuple[str, str, float]:
+    """
+    Queries Google's Fact Check Tools API for Snopes + other fact-checks.
+    Returns: (verdict, explanation, confidence)
+    """
+    base_url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+    params = {
+        "query": claim,
+        "languageCode": language,
+        "pageSize": max_results
+    }
+    try:
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        if "claims" not in data or not data["claims"]:
+            return "Insufficient", "No matching fact-checks found in Google's database (including Snopes).", 0.3
+
+        # Take the first (usually strongest) result
+        claim_review = data["claims"][0].get("claimReview", [{}])[0]
+        publisher = claim_review.get("publisher", {}).get("name", "Unknown")
+        textual_rating = claim_review.get("textualRating", "Unknown")
+        url = claim_review.get("url", "")
+        title = claim_review.get("title", "")
+
+        # Map to your verdicts
+        rating_lower = textual_rating.lower()
+        if any(word in rating_lower for word in ["true", "correct", "accurate"]):
+            verdict = "Supported"
+            color_conf = 0.9
+        elif any(word in rating_lower for word in ["false", "not true", "inaccurate", "debunked"]):
+            verdict = "Refuted"
+            color_conf = 0.9
+        elif any(word in rating_lower for word in ["mixture", "partial", "unproven", "unverified"]):
+            verdict = "Insufficient"
+            color_conf = 0.6
+        else:
+            verdict = "Insufficient"
+            color_conf = 0.4
+
+        explanation = f"From {publisher}: \"{textual_rating}\" — {title}"
+        if url:
+            explanation += f"\nSource: {url}"
+
+        return verdict, explanation, round(color_conf, 2)
+
+    except Exception as e:
+        return "Error", f"Google Fact Check failed: {str(e)}", 0.0
+        
 def wikipedia_fact_check(claim: str, max_sentences: int = 5, similarity_threshold: float = 0.6) -> tuple[str, str, float]:
     """
     Attempts to verify a factual claim using Wikipedia.
@@ -304,31 +356,40 @@ if mode == "Text":
                 st.caption(f"Against evidence: **{evidence}**")
 
             else:
-                # --- Wikipedia path when no evidence ---
-                verdict, explanation, confidence = wikipedia_fact_check(claim)
+                # No evidence → check multiple sources
+                wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
+                gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
 
-                if verdict == "Supported":
+                # Simple ensemble: prefer Google if it has a strong signal, else Wikipedia
+                if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.7:
+                    final_verdict = gfc_verdict
+                    final_explain = gfc_explain
+                    final_conf = gfc_conf
+                    source_name = "Google Fact Check (includes Snopes & others)"
+                else:
+                    final_verdict = wiki_verdict
+                    final_explain = wiki_explain
+                    final_conf = wiki_conf
+                    source_name = "Wikipedia"
+            
+                # Render (adapt your existing icons/colors)
+                if final_verdict == "Supported":
                     color = "green"
                     icon = "✅"
-                elif verdict == "Refuted":
+                elif final_verdict == "Refuted":
                     color = "red"
                     icon = "❌"
-                elif verdict == "Insufficient":
+                elif final_verdict == "Insufficient":
                     color = "gray"
                     icon = "⚪"
                 else:
                     color = "orange"
                     icon = "⚠️"
-
-                st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {verdict}</span>", unsafe_allow_html=True)
-                st.markdown(f"**Confidence**: {confidence:.0%}")
-                st.markdown(f"**Explanation**: {explanation}")
-                if "page:" in explanation:
-                    try:
-                        page_title = explanation.split("page: ")[-1].strip(")")
-                        st.caption(f"Source: [Wikipedia - {page_title}](https://en.wikipedia.org/wiki/{page_title.replace(' ', '_')})")
-                    except:
-                        st.caption("Source: Wikipedia (link extraction failed)")
+            
+                st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {final_conf:.0%}")
+                st.markdown(f"**Explanation**: {final_explain}")
+                st.caption(f"Source: {source_name}")
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
