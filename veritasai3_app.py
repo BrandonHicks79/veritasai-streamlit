@@ -175,7 +175,7 @@ def error_level_analysis(image, quality=90):
 st.title("🌐  VeritasAI 🔍")
 
 st.markdown("""
-Building intelligence in machines while searching for truth in life
+Building intelligence in machines while searching for truth in life - Brandon Hicks
 """, unsafe_allow_html=True)
 
 # Optional one-liner instructions (keep very short)
@@ -249,6 +249,9 @@ elif mode == "Image":
                     st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
                 else:
                     st.markdown("📍 **No valid GPS coordinates found.**")
+        else:
+        st.info("Upload an image to check for signs of AI generation/manipulation.")
+
 
             # ── AI Detection ──
             st.markdown("### 🔍 AI-Generation Analysis")
