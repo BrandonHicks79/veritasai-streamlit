@@ -168,15 +168,14 @@ def error_level_analysis(image, quality=90):
 # ────────────────────────────────────────────────
 # MAIN UI
 # ────────────────────────────────────────────────
-st.title("🤖 VeritasAI")
+st.title("🌐 🕸️ VeritasAI")
 
 st.markdown("""
-**AI-powered image & text analyzer**  
-Created by **Brandon Hicks** — A.I. Developer
+**Text and image analyzer
 """, unsafe_allow_html=True)
 
 # Optional one-liner instructions (keep very short)
-st.caption("Upload an image or paste text to check for signs of AI generation or manipulation.")
+st.caption("Upload an image to check for signs of AI generation, manipulation or paste text to determine bias-based language.")
 
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
