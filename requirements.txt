@@ -1,5 +1,5 @@
-streamlit==1.41.1  # or latest stable you were using locally
-transformers==4.44.2  # Known good version where pipeline imports cleanly
+streamlit==1.41.1  
+transformers==4.44.2  
 torch==2.4.1
 torchvision==0.19.1
 detoxify==0.5.2
@@ -12,3 +12,4 @@ matplotlib
 numpy
 piexif
 image-quality
+sentence-transformers
