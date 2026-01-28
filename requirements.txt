@@ -13,3 +13,4 @@ numpy
 piexif
 image-quality
 sentence-transformers
+wikipedia==1.4.0
