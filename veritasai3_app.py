@@ -16,6 +16,7 @@ import warnings
 import wikipedia
 import re
 import requests
+import json
 from difflib import SequenceMatcher
 from sentence_transformers import CrossEncoder
 
@@ -83,7 +84,7 @@ def download_nltk_data():
 download_nltk_data()
 
 # ────────────────────────────────────────────────
-# FACT-CHECK HELPERS
+# FACT-CHECK HELPERS (unchanged)
 # ────────────────────────────────────────────────
 
 def google_fact_check(claim: str, language: str = "en", max_results: int = 3) -> tuple:
@@ -319,14 +320,8 @@ elif mode == "Image":
         with st.spinner("Processing image..."):
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_container_width=True)
-            st.markdown("### 🔎 Check Image Origins (Reverse Search)")
-            st.info("To see if this image appears elsewhere online (old posts = more likely real):")
-            st.markdown("- [TinEye Reverse Image Search](https://tineye.com/) – upload or paste image URL")
-            st.markdown("- [Google Reverse Image Search](https://images.google.com/) – click the camera icon → paste image URL")
-            st.markdown("- [Yandex Images](https://yandex.com/images/) – very good at spotting AI fakes")
-            st.caption("Tip: Look for the **oldest** result date and **source diversity**. Sudden mass appearance or no history before 2024–2025 often = AI.")
 
-            # Metadata
+            # ── Metadata ──
             metadata = extract_exif_data(image)
             st.markdown("### 🧾 Metadata (EXIF)")
             if "Error" in metadata:
@@ -343,7 +338,7 @@ elif mode == "Image":
                 else:
                     st.markdown("📍 **No valid GPS coordinates found.**")
 
-            # AI Detection
+            # ── AI Detection ──
             st.markdown("### 🔍 AI-Generation Analysis")
             detector = get_ai_image_detector()
             detector_results = detector(image)
@@ -369,7 +364,51 @@ elif mode == "Image":
             st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
             st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
 
-            # Verdict
+            # ── Reverse Image Search via HF Space (Option A) ──
+            st.markdown("### 🔎 Automatic Reverse Image Search")
+            st.info("Querying public reverse image search demo... (may take 10–60 seconds if sleeping)")
+
+            # Replace with a real working HF Space URL (test in browser first)
+            hf_space_url = "https://api-inference.huggingface.co/models/akhaliq/Reverse-Image-Search"  # Example – update if needed
+
+            with st.spinner("Searching for matches..."):
+                try:
+                    # Prepare image bytes
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    files = {'image': ('image.png', buffered.getvalue(), 'image/png')}
+
+                    # POST to HF Space
+                    res = requests.post(hf_space_url, files=files, timeout=60)
+                    res.raise_for_status()
+
+                    # Parse JSON results (adjust parsing based on actual Space output)
+                    data = res.json()
+
+                    st.success("Search complete!")
+
+                    if "results" in data and data["results"]:
+                        st.markdown("**Top similar images / sources found online:**")
+                        for result in data["results"][:5]:  # Limit to top 5
+                            title = result.get("title", "Untitled")
+                            url = result.get("url", "#")
+                            score = result.get("score", "N/A")
+                            st.markdown(f"- **{title}** (Score: {score})")
+                            if url != "#":
+                                st.markdown(f"  [View source]({url})")
+                    else:
+                        st.info("No clear matches found or results format changed. Try manual search on TinEye/Google.")
+                        st.markdown("Fallback: [TinEye](https://tineye.com/) | [Google Images](https://images.google.com/)")
+
+                except requests.exceptions.Timeout:
+                    st.warning("Search timed out – the demo Space may be sleeping or busy. Try again in a minute or use manual links below.")
+                except requests.exceptions.HTTPError as e:
+                    st.error(f"Space returned error: {str(e)}")
+                except Exception as e:
+                    st.error(f"Reverse search failed: {str(e)}")
+                    st.info("Fallback: Use [TinEye](https://tineye.com/) or [Google Images](https://images.google.com/) manually.")
+
+            # ── Final Verdict ──
             metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
             flags = [blur_flag, low_noise_flag, ela_flag]
             ai_flags_count = sum(flags)
@@ -415,4 +454,5 @@ elif mode == "Image":
                 for r in reasons:
                     st.markdown(f"- {r}")
             else:
+                st.markdown("No major suspicious signals.")
                 st.markdown("No major suspicious signals.")
