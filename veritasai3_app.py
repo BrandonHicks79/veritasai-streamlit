@@ -316,6 +316,11 @@ if mode == "Text":
                         final_explain = wiki_explain
                         final_conf = wiki_conf
                         source = "Wikipedia"
+                        # After setting verdict = "Supported"
+                    if verdict == "Supported" and any(word in norm_summary for word in ["disproven", "debunked", "false", "myth", "pseudoscience"]):
+                        verdict = "Refuted"
+                        explanation = explanation.replace("confirms", "describes as disproven/myth")
+                        conf = max(0.7, conf)  # keep high confidence for debunkings
                 
                         # Color/icon mapping
                         color_map = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}
