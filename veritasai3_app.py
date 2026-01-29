@@ -319,6 +319,12 @@ elif mode == "Image":
         with st.spinner("Processing image..."):
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_container_width=True)
+            st.markdown("### 🔎 Check Image Origins (Reverse Search)")
+            st.info("To see if this image appears elsewhere online (old posts = more likely real):")
+            st.markdown("- [TinEye Reverse Image Search](https://tineye.com/) – upload or paste image URL")
+            st.markdown("- [Google Reverse Image Search](https://images.google.com/) – click the camera icon → paste image URL")
+            st.markdown("- [Yandex Images](https://yandex.com/images/) – very good at spotting AI fakes")
+            st.caption("Tip: Look for the **oldest** result date and **source diversity**. Sudden mass appearance or no history before 2024–2025 often = AI.")
 
             # Metadata
             metadata = extract_exif_data(image)
