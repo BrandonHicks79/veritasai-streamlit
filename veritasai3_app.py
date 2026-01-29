@@ -364,12 +364,12 @@ elif mode == "Image":
             st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
             st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
 
-            # ── Reverse Image Search via HF Space (Option A) ──
+            # ── Automatic Reverse Image Search via HF Space (Option A) ──
             st.markdown("### 🔎 Automatic Reverse Image Search")
             st.info("Querying public reverse image search demo... (may take 10–60 seconds if sleeping)")
 
-            # Replace with a real working HF Space URL (test in browser first)
-            hf_space_url = "https://api-inference.huggingface.co/models/akhaliq/Reverse-Image-Search"  # Example – update if needed
+            # Working HF Space endpoint (test this URL in browser first – it should accept image upload)
+            hf_space_url = "https://multimodalart-reverse-image-search.hf.space/api/predict"  # Update if needed
 
             with st.spinner("Searching for matches..."):
                 try:
@@ -382,28 +382,30 @@ elif mode == "Image":
                     res = requests.post(hf_space_url, files=files, timeout=60)
                     res.raise_for_status()
 
-                    # Parse JSON results (adjust parsing based on actual Space output)
+                    # Parse JSON results (adjust based on actual output – usually list of dicts)
                     data = res.json()
 
                     st.success("Search complete!")
 
-                    if "results" in data and data["results"]:
+                    if isinstance(data, list) and data:
                         st.markdown("**Top similar images / sources found online:**")
-                        for result in data["results"][:5]:  # Limit to top 5
+                        for result in data[:5]:  # Limit to top 5
                             title = result.get("title", "Untitled")
-                            url = result.get("url", "#")
+                            url = result.get("url", result.get("source", "#"))
                             score = result.get("score", "N/A")
                             st.markdown(f"- **{title}** (Score: {score})")
                             if url != "#":
                                 st.markdown(f"  [View source]({url})")
+                    elif isinstance(data, dict):
+                        st.info("Results: " + json.dumps(data, indent=2)[:1000])  # Raw fallback
                     else:
                         st.info("No clear matches found or results format changed. Try manual search on TinEye/Google.")
-                        st.markdown("Fallback: [TinEye](https://tineye.com/) | [Google Images](https://images.google.com/)")
 
                 except requests.exceptions.Timeout:
                     st.warning("Search timed out – the demo Space may be sleeping or busy. Try again in a minute or use manual links below.")
                 except requests.exceptions.HTTPError as e:
-                    st.error(f"Space returned error: {str(e)}")
+                    st.error(f"Space returned error: {str(e)} (HTTP {res.status_code})")
+                    st.info("Fallback: Use [TinEye](https://tineye.com/) or [Google Images](https://images.google.com/) manually.")
                 except Exception as e:
                     st.error(f"Reverse search failed: {str(e)}")
                     st.info("Fallback: Use [TinEye](https://tineye.com/) or [Google Images](https://images.google.com/) manually.")
@@ -454,5 +456,4 @@ elif mode == "Image":
                 for r in reasons:
                     st.markdown(f"- {r}")
             else:
-                st.markdown("No major suspicious signals.")
                 st.markdown("No major suspicious signals.")
