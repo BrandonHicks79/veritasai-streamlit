@@ -294,41 +294,39 @@ if mode == "Text":
                 st.markdown(f"**Confidence**: {score:.2%}")
                 st.caption(f"Checked claim: **{claim}**  \nAgainst evidence: **{evidence}**")
             else:
-    # Prioritize Google Fact Check (includes Snopes, PolitiFact, FactCheck.org, etc.)
+                # Prioritize Google Fact Check (includes Snopes, PolitiFact, FactCheck.org, etc.)
+                gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
+                
+                if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.6:  # Lower threshold slightly for edge cases
+                    final_verdict = gfc_verdict
+                    final_explain = gfc_explain
+                    final_conf = gfc_conf
+                    source = "Google Fact Check (Snopes, PolitiFact, etc.)"
                 else:
-    # ALWAYS try Google Fact Check first (includes Snopes, PolitiFact, etc.)
-    gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
-    
-    if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.6:  # Lower threshold slightly for edge cases
-        final_verdict = gfc_verdict
-        final_explain = gfc_explain
-        final_conf = gfc_conf
-        source = "Google Fact Check (Snopes, PolitiFact, etc.)"
-    else:
-        # Only fall back to Wikipedia if Google has nothing useful
-        wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
-        
-        # Make Wikipedia verdict more decisive for obvious facts
-        if wiki_verdict == "Insufficient" and "in " in wiki_explain.lower() or "is " in wiki_explain.lower():
-            wiki_verdict = "Supported"
-            wiki_explain = wiki_explain.replace("Could not confirm", "Wikipedia confirms location/description")
-            wiki_conf = max(wiki_conf, 0.8)
-        
-            final_verdict = wiki_verdict
-            final_explain = wiki_explain
-            final_conf = wiki_conf
-            source = "Wikipedia"
-    
-            # Color/icon mapping
-            color_map = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}
-            icon_map = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}
-            color = color_map.get(final_verdict, "gray")
-            icon = icon_map.get(final_verdict, "❓")
-            
-            st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
-            st.markdown(f"**Confidence**: {final_conf:.0%}")
-            st.markdown(f"**Explanation**: {final_explain}")
-            st.caption(f"Source: {source}")
+                    # Only fall back to Wikipedia if Google has nothing useful
+                    wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
+                    
+                    # Make Wikipedia verdict more decisive for obvious facts
+                    if wiki_verdict == "Insufficient" and "in " in wiki_explain.lower() or "is " in wiki_explain.lower():
+                        wiki_verdict = "Supported"
+                        wiki_explain = wiki_explain.replace("Could not confirm", "Wikipedia confirms location/description")
+                        wiki_conf = max(wiki_conf, 0.8)
+                    
+                        final_verdict = wiki_verdict
+                        final_explain = wiki_explain
+                        final_conf = wiki_conf
+                        source = "Wikipedia"
+                
+                        # Color/icon mapping
+                        color_map = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}
+                        icon_map = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}
+                        color = color_map.get(final_verdict, "gray")
+                        icon = icon_map.get(final_verdict, "❓")
+                        
+                        st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**Confidence**: {final_conf:.0%}")
+                        st.markdown(f"**Explanation**: {final_explain}")
+                        st.caption(f"Source: {source}")
 
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
