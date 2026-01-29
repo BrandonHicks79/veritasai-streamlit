@@ -261,4 +261,167 @@ def semantic_check_with_clip(image, model, preprocess, device):
 
 st.title("🌐 VeritasAI 🔍")
 st.markdown("""
-Building intelligence in machines while
+Building intelligence in machines while searching for truth in life – Brandon Hicks
+""", unsafe_allow_html=True)
+st.caption("Upload an image to check for signs of AI generation/manipulation or paste text to fact-check.")
+
+mode = st.radio("Choose analysis mode:", ["Text", "Image"])
+
+if mode == "Text":
+    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
+    claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
+    evidence = st.text_area("Evidence or context (optional but improves accuracy):",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use Wikipedia lookup.",
+                            height=150)
+    if claim.strip():
+        with st.spinner("Analyzing claim..."):
+            if evidence.strip():
+                nli_model = get_nli_fact_checker()
+                scores = nli_model.predict([(claim, evidence)])
+                probs = scores[0]
+                label_idx = probs.argmax()
+                label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
+                score = probs[label_idx]
+                if label == "ENTAILMENT":
+                    verdict = "✅ **Supported** (evidence entails the claim)"
+                    color = "green"
+                elif label == "CONTRADICTION":
+                    verdict = "❌ **Refuted** (evidence contradicts the claim)"
+                    color = "red"
+                else:
+                    verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
+                    color = "gray"
+                st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {score:.2%}")
+                st.caption(f"Checked claim: **{claim}**  \nAgainst evidence: **{evidence}**")
+            else:
+                wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
+                gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
+                if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.7:
+                    final_verdict = gfc_verdict
+                    final_explain = gfc_explain
+                    final_conf = gfc_conf
+                    source = "Google Fact Check"
+                else:
+                    final_verdict = wiki_verdict
+                    final_explain = wiki_explain
+                    final_conf = wiki_conf
+                    source = "Wikipedia"
+                color = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}.get(final_verdict, "gray")
+                icon = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}.get(final_verdict, "❓")
+                st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {final_conf:.0%}")
+                st.markdown(f"**Explanation**: {final_explain}")
+                st.caption(f"Source: {source}")
+
+elif mode == "Image":
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+    if uploaded_file:
+        with st.spinner("Processing image..."):
+            image = Image.open(uploaded_file).convert("RGB")
+            st.image(image, caption="Uploaded Image", use_container_width=True)
+
+            # ── Metadata ──
+            metadata = extract_exif_data(image)
+            st.markdown("### 🧾 Metadata (EXIF)")
+            if "Error" in metadata:
+                st.error(metadata["Error"])
+            else:
+                for key, value in metadata.items():
+                    if key != "GPSInfo":
+                        st.markdown(f"**{key}**: {value}")
+                gps_lat, gps_lon = decode_gps(metadata.get("GPSInfo"))
+                if gps_lat is not None and gps_lon is not None:
+                    maps_url = f"https://www.google.com/maps?q={gps_lat},{gps_lon}&z=16"
+                    st.markdown(f"📍 **Likely taken here:** [Google Maps ↗]({maps_url})")
+                    st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
+                else:
+                    st.markdown("📍 **No valid GPS coordinates found.**")
+
+            # ── AI Detection ──
+            st.markdown("### 🔍 AI-Generation Analysis")
+            detector = get_ai_image_detector()
+            detector_results = detector(image)
+            ai_prob = 0.0
+            main_label = "UNKNOWN"
+            for res in detector_results:
+                lbl = res['label'].lower()
+                if any(k in lbl for k in ['ai', 'generated', 'fake', 'synthetic']):
+                    ai_prob = res['score']
+                    main_label = "AI-Generated"
+                    break
+                elif any(k in lbl for k in ['real', 'human', 'authentic', 'photo']):
+                    ai_prob = 1.0 - res['score']
+                    main_label = "Real Photo"
+                    break
+            st.markdown(f"**AI Detector**: {main_label} (AI probability: **{ai_prob:.1%}**)")
+
+            blur_flag = detect_blur_or_smoothness(image)
+            low_noise_flag = detect_noise_level(image)
+            ela_flag = error_level_analysis(image)
+
+            st.markdown("⚠️ Overly smooth regions detected." if blur_flag else "✅ No excessive smoothing.")
+            st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
+            st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
+
+            # ── Perceptual Hash + Auto Google Search for Origin (fully automatic) ──
+            st.markdown("### 🔎 Image Fingerprint & Origin Check")
+            phash = imagehash.phash(image)  # perceptual hash
+            phash_str = str(phash)
+
+            st.caption(f"Perceptual hash (unique fingerprint): `{phash_str}`")
+
+            # Auto-generate smart search query
+            search_query = f'"{phash_str}" OR "perceptual hash {phash_str[:12]}" "first seen" OR "earliest appearance" OR "original post" OR "source" -inurl:(tineye.com google.com yandex.com)'
+            google_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
+
+            st.markdown(f"**Check first appearance online** — [Google search for this image's fingerprint]({google_url})")
+            st.caption("Tip: If this hash appears in posts from years ago on forums/social media/news sites, it's likely real. New/unique hashes or sudden clusters often indicate AI-generated content.")
+
+            # ── Final Verdict ──
+            metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
+            flags = [blur_flag, low_noise_flag, ela_flag]
+            ai_flags_count = sum(flags)
+
+            ai_signals = 0.0
+            reasons = []
+            if ai_prob > 0.70:
+                ai_signals += 3.0
+                reasons.append(f"Strong AI detector match ({ai_prob:.0%})")
+            elif ai_prob > 0.45:
+                ai_signals += 1.5
+                reasons.append(f"Moderate AI suspicion ({ai_prob:.0%})")
+            if blur_flag:
+                ai_signals += 0.8
+                reasons.append("Over-smoothing")
+            if low_noise_flag:
+                ai_signals += 0.8
+                reasons.append("Low noise")
+            if ela_flag:
+                ai_signals += 0.8
+                reasons.append("Uniform ELA")
+            if metadata_confidence < 1:
+                ai_signals += 0.5
+                reasons.append("Missing camera metadata")
+
+            if ai_signals >= 5.0:
+                verdict = "🔴 **Very likely AI-generated**"
+                color = "red"
+            elif ai_signals >= 3.5:
+                verdict = "🟠 **Probably AI or heavily edited**"
+                color = "orange"
+            elif ai_signals >= 2.0:
+                verdict = "🟡 **Somewhat suspicious**"
+                color = "yellow"
+            else:
+                verdict = "✅ **Most likely real photograph**"
+                color = "green"
+
+            st.markdown(f"### Final Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+            st.markdown(f"**Total AI Signal Score**: {ai_signals:.1f}")
+            if reasons:
+                st.markdown("**Triggered reasons:**")
+                for r in reasons:
+                    st.markdown(f"- {r}")
+            else:
+                st.markdown("No major suspicious signals.")
