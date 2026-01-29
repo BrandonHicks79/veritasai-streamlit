@@ -18,7 +18,6 @@ import re
 import requests
 from difflib import SequenceMatcher
 from sentence_transformers import CrossEncoder
-import imagehash  # already in deps for perceptual hash
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -364,19 +363,21 @@ elif mode == "Image":
             st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
             st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
 
-            # ── Perceptual Hash + Auto Google Search for Origin (fully automatic) ──
-            st.markdown("### 🔎 Image Fingerprint & Origin Check")
-            phash = imagehash.phash(image)  # perceptual hash
-            phash_str = str(phash)
+            # ── TinEye Reverse Image Search (Primary) ──
+            st.markdown("### 🔎 Reverse Image Search on TinEye")
+            st.info("TinEye is excellent for finding exact matches and the earliest online appearances of an image.")
 
-            st.caption(f"Perceptual hash (unique fingerprint): `{phash_str}`")
+            # Display instructions for manual TinEye search (since no auto-upload)
+            st.markdown("**Quick steps to search this image on TinEye**:")
+            st.markdown("1. Right-click the uploaded image above")
+            st.markdown("2. Choose 'Copy image address' or 'Open image in new tab'")
+            st.markdown("3. Go to [TinEye.com](https://tineye.com/) and paste the URL into the search bar (or upload the image directly)")
+            st.markdown("4. Review results for oldest dates and source diversity")
 
-            # Auto-generate smart search query
-            search_query = f'"{phash_str}" OR "perceptual hash {phash_str[:12]}" "first seen" OR "earliest appearance" OR "original post" OR "source" -inurl:(tineye.com google.com yandex.com)'
-            google_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
+            # Pre-filled TinEye link (user pastes URL manually)
+            st.markdown("[Open TinEye Search](https://tineye.com/) – paste the image URL after copying it from above")
 
-            st.markdown(f"**Check first appearance online** — [Google search for this image's fingerprint]({google_url})")
-            st.caption("Tip: If this hash appears in posts from years ago on forums/social media/news sites, it's likely real. New/unique hashes or sudden clusters often indicate AI-generated content.")
+            st.caption("**Why TinEye?** It specializes in exact matches and shows the first known appearance date. Real photos usually have older, diverse sources. AI images often have no prior history or appear in sudden clusters.")
 
             # ── Final Verdict ──
             metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
