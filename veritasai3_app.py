@@ -16,7 +16,6 @@ import warnings
 import wikipedia
 import re
 import requests
-import json
 from difflib import SequenceMatcher
 from sentence_transformers import CrossEncoder
 
@@ -32,6 +31,9 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
+# ────────────────────────────────────────────────
+# SIDEBAR
+# ────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### VeritasAI")
     st.markdown("**AI Image & Text Analyzer**")
@@ -45,6 +47,7 @@ with st.sidebar:
 # ────────────────────────────────────────────────
 # CACHED MODELS
 # ────────────────────────────────────────────────
+
 @st.cache_resource(show_spinner="Loading Detoxify...", ttl="2h")
 def get_detoxify():
     from detoxify import Detoxify
@@ -57,10 +60,11 @@ def get_sentiment_pipeline():
         model="distilbert-base-uncased-finetuned-sst-2-english",
         device="cpu"
     )
+
 @st.cache_resource(show_spinner="Loading NLI fact-check model...", ttl="2h")
 def get_nli_fact_checker():
-    return CrossEncoder('cross-encoder/nli-deberta-v3-base', device='cpu')  
-    
+    return CrossEncoder('cross-encoder/nli-deberta-v3-base', device='cpu')
+
 @st.cache_resource(show_spinner="Loading CLIP...", ttl="2h")
 def get_clip():
     device = "cpu"
@@ -69,7 +73,6 @@ def get_clip():
 
 @st.cache_resource(show_spinner="Loading AI Image Detector...", ttl="2h")
 def get_ai_image_detector():
-    # Stronger 2025–2026 model with better generalization and lower false positives
     return pipeline("image-classification", model="umm-maybe/AI-image-detector")
 
 @st.cache_resource
@@ -80,138 +83,73 @@ def download_nltk_data():
 download_nltk_data()
 
 # ────────────────────────────────────────────────
-# HELPER FUNCTIONS
+# FACT-CHECK HELPERS
 # ────────────────────────────────────────────────
-def google_fact_check(claim: str, language: str = "en", max_results: int = 3) -> tuple[str, str, float]:
-    """
-    Queries Google's Fact Check Tools API for Snopes + other fact-checks.
-    Returns: (verdict, explanation, confidence)
-    """
+
+def google_fact_check(claim: str, language: str = "en", max_results: int = 3) -> tuple:
     base_url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
-    params = {
-        "query": claim,
-        "languageCode": language,
-        "pageSize": max_results
-    }
+    params = {"query": claim, "languageCode": language, "pageSize": max_results}
     try:
         response = requests.get(base_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-
         if "claims" not in data or not data["claims"]:
-            return "Insufficient", "No matching fact-checks found in Google's database (including Snopes).", 0.3
-
-        # Take the first (usually strongest) result
+            return "Insufficient", "No matching fact-checks found.", 0.3
         claim_review = data["claims"][0].get("claimReview", [{}])[0]
         publisher = claim_review.get("publisher", {}).get("name", "Unknown")
         textual_rating = claim_review.get("textualRating", "Unknown")
         url = claim_review.get("url", "")
         title = claim_review.get("title", "")
-
-        # Map to your verdicts
         rating_lower = textual_rating.lower()
         if any(word in rating_lower for word in ["true", "correct", "accurate"]):
             verdict = "Supported"
-            color_conf = 0.9
+            conf = 0.9
         elif any(word in rating_lower for word in ["false", "not true", "inaccurate", "debunked"]):
             verdict = "Refuted"
-            color_conf = 0.9
-        elif any(word in rating_lower for word in ["mixture", "partial", "unproven", "unverified"]):
-            verdict = "Insufficient"
-            color_conf = 0.6
+            conf = 0.9
         else:
             verdict = "Insufficient"
-            color_conf = 0.4
-
+            conf = 0.6
         explanation = f"From {publisher}: \"{textual_rating}\" — {title}"
         if url:
             explanation += f"\nSource: {url}"
-
-        return verdict, explanation, round(color_conf, 2)
-
+        return verdict, explanation, round(conf, 2)
     except Exception as e:
         return "Error", f"Google Fact Check failed: {str(e)}", 0.0
-        
-def wikipedia_fact_check(claim: str, max_sentences: int = 5, similarity_threshold: float = 0.6) -> tuple[str, str, float]:
-    """
-    Attempts to verify a factual claim using Wikipedia.
-    Returns: (verdict, explanation, confidence)
-    - verdict: "Supported", "Refuted", "Insufficient", "Error"
-    - explanation: human-readable reason + source snippet
-    - confidence: 0.0 to 1.0
-    """
-    claim = claim.strip().rstrip('.!?')  # clean up
+
+def wikipedia_fact_check(claim: str, max_sentences: int = 5, similarity_threshold: float = 0.6) -> tuple:
+    claim = claim.strip().rstrip('.!?')
     if not claim:
         return "Insufficient", "No claim provided.", 0.0
-
     try:
-        # Step 1: Try to find the most relevant page (auto-suggest helps with typos)
-        wikipedia.set_lang("en")  # or make configurable later
+        wikipedia.set_lang("en")
         page = wikipedia.page(claim, auto_suggest=True, redirect=True)
-
-        # Step 2: Get summary (first few sentences — often contains key facts)
         summary = wikipedia.summary(claim, sentences=max_sentences)
-
-        # Step 3: Simple heuristic matching
-        # Normalize texts: lower, remove punctuation, extra spaces
         norm_claim = re.sub(r'\W+', ' ', claim.lower()).strip()
         norm_summary = re.sub(r'\W+', ' ', summary.lower()).strip()
-
-        # Fuzzy similarity (good for paraphrasing)
         matcher = SequenceMatcher(None, norm_claim, norm_summary)
         similarity = matcher.ratio()
-
-        # Check if claim keywords appear in summary
         claim_words = set(norm_claim.split())
         summary_words = set(norm_summary.split())
         overlap = len(claim_words.intersection(summary_words)) / len(claim_words) if claim_words else 0
-
-        # Combine signals
         combined_score = (similarity + overlap) / 2
-
         if combined_score >= similarity_threshold:
             verdict = "Supported"
-            conf = min(0.95, combined_score + 0.1)  # slight boost if match
+            conf = min(0.95, combined_score + 0.1)
             snippet = summary[:250] + "..." if len(summary) > 250 else summary
-            explanation = f"Supported by Wikipedia: \"{snippet}\" (from page: {page.title})"
-        elif "not" in norm_claim or "false" in norm_claim or "no " in norm_claim:
-            # Rough negation check — could be improved
-            if combined_score > 0.3:  # some relevance but claim says "not"
-                verdict = "Refuted"
-                conf = min(0.9, 0.4 + combined_score)
-                explanation = f"Appears refuted — Wikipedia describes the opposite: \"{summary[:200]}...\""
-            else:
-                verdict = "Insufficient"
-                conf = 0.4
-                explanation = "No strong match found to confirm or refute."
+            explanation = f"Supported by Wikipedia: \"{snippet}\" (page: {page.title})"
         else:
             verdict = "Insufficient"
             conf = combined_score
-            explanation = f"Could not clearly confirm. Wikipedia says: \"{summary[:200]}...\" (page: {page.title})"
-
+            explanation = f"Could not confirm. Wikipedia says: \"{summary[:200]}...\" (page: {page.title})"
         return verdict, explanation, round(conf, 2)
-
-    except wikipedia.DisambiguationError as e:
-        # Could pick the first option or show options to user, but for simplicity:
-        try:
-            page = wikipedia.page(e.options[0])  # take first suggestion
-            return wikipedia_fact_check(claim)  # recurse with better title
-        except:
-            return "Insufficient", f"Ambiguous topic — possible pages: {', '.join(e.options[:3])}", 0.3
-
-    except wikipedia.PageError:
-        # Try searching instead of direct page
-        try:
-            search_results = wikipedia.search(claim, results=1)
-            if search_results:
-                return wikipedia_fact_check(search_results[0])  # try again with suggested title
-            else:
-                return "Insufficient", "No relevant Wikipedia page found.", 0.2
-        except:
-            return "Error", "Wikipedia search failed.", 0.0
-
     except Exception as e:
-        return "Error", f"Unexpected error: {str(e)}", 0.0
+        return "Error", f"Wikipedia lookup failed: {str(e)}", 0.0
+
+# ────────────────────────────────────────────────
+# IMAGE HELPERS
+# ────────────────────────────────────────────────
+
 def extract_exif_data(image):
     try:
         exif_dict = piexif.load(image.info.get("exif", b""))
@@ -237,15 +175,19 @@ def decode_gps(exif_gps):
         lon = exif_gps.get(4)
         if None in (lat_ref, lat, lon_ref, lon):
             return None, None
+
         def dms_to_decimal(dms):
             d, m, s = dms
             return d[0]/d[1] + (m[0]/m[1])/60 + (s[0]/s[1])/3600
+
         latitude = dms_to_decimal(lat)
         longitude = dms_to_decimal(lon)
+
         if lat_ref.decode("utf-8", "ignore") == 'S':
             latitude *= -1
         if lon_ref.decode("utf-8", "ignore") == 'W':
             longitude *= -1
+
         return round(latitude, 6), round(longitude, 6)
     except Exception:
         return None, None
@@ -304,40 +246,41 @@ def error_level_analysis(image, quality=90):
     ela_variance = np.var(ela_array)
     return ela_variance < 50
 
+def semantic_check_with_clip(image, model, preprocess, device):
+    inputs = preprocess(image).unsqueeze(0).to(device)
+    tokens = clip.tokenize(["a real photo", "an AI-generated image"]).to(device)
+    with torch.no_grad():
+        probs = model(inputs, tokens)[0].softmax(dim=-1).cpu().numpy()[0]
+    labels = ["a real photo", "an AI-generated image"]
+    return labels[np.argmax(probs)], max(probs)
+
 # ────────────────────────────────────────────────
 # MAIN UI
 # ────────────────────────────────────────────────
-st.title("🌐  VeritasAI 🔍")
 
+st.title("🌐 VeritasAI 🔍")
 st.markdown("""
-Building intelligence in machines while searching for truth in life - Brandon Hicks
+Building intelligence in machines while searching for truth in life – Brandon Hicks
 """, unsafe_allow_html=True)
-
-# Optional one-liner instructions (keep very short)
-st.caption("Upload an image to check for signs of AI generation, manipulation or paste text to fact-check.")
+st.caption("Upload an image to check for signs of AI generation/manipulation or paste text to fact-check.")
 
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
     st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
-  
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
                             placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use Wikipedia lookup.",
                             height=150)
-
     if claim.strip():
         with st.spinner("Analyzing claim..."):
             if evidence.strip():
-                # --- NLI path when evidence provided ---
                 nli_model = get_nli_fact_checker()
-                # No need for fallback evidence text anymore since real evidence exists
                 scores = nli_model.predict([(claim, evidence)])
                 probs = scores[0]
                 label_idx = probs.argmax()
                 label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
                 score = probs[label_idx]
-
                 if label == "ENTAILMENT":
                     verdict = "✅ **Supported** (evidence entails the claim)"
                     color = "green"
@@ -347,49 +290,29 @@ if mode == "Text":
                 else:
                     verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
                     color = "gray"
-
                 st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Confidence**: {score:.2%}")
-                st.markdown(f"**Raw label**: {label}")
-                st.caption(f"**Breakdown** — Entailment: {probs[1]:.1%} | Contradiction: {probs[0]:.1%} | Neutral: {probs[2]:.1%}")
-                st.caption(f"Checked claim: **{claim}**")
-                st.caption(f"Against evidence: **{evidence}**")
-
+                st.caption(f"Checked claim: **{claim}**  \nAgainst evidence: **{evidence}**")
             else:
-                # No evidence → check multiple sources
                 wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
                 gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
-
-                # Simple ensemble: prefer Google if it has a strong signal, else Wikipedia
                 if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.7:
                     final_verdict = gfc_verdict
                     final_explain = gfc_explain
                     final_conf = gfc_conf
-                    source_name = "Google Fact Check (includes Snopes & others)"
+                    source = "Google Fact Check"
                 else:
                     final_verdict = wiki_verdict
                     final_explain = wiki_explain
                     final_conf = wiki_conf
-                    source_name = "Wikipedia"
-            
-                # Render (adapt your existing icons/colors)
-                if final_verdict == "Supported":
-                    color = "green"
-                    icon = "✅"
-                elif final_verdict == "Refuted":
-                    color = "red"
-                    icon = "❌"
-                elif final_verdict == "Insufficient":
-                    color = "gray"
-                    icon = "⚪"
-                else:
-                    color = "orange"
-                    icon = "⚠️"
-            
+                    source = "Wikipedia"
+                color = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}.get(final_verdict, "gray")
+                icon = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}.get(final_verdict, "❓")
                 st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Confidence**: {final_conf:.0%}")
                 st.markdown(f"**Explanation**: {final_explain}")
-                st.caption(f"Source: {source_name}")
+                st.caption(f"Source: {source}")
+
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
@@ -397,7 +320,7 @@ elif mode == "Image":
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_container_width=True)
 
-            # ── Metadata ──
+            # Metadata
             metadata = extract_exif_data(image)
             st.markdown("### 🧾 Metadata (EXIF)")
             if "Error" in metadata:
@@ -413,13 +336,9 @@ elif mode == "Image":
                     st.caption(f"Coordinates: {gps_lat:.6f}°, {gps_lon:.6f}")
                 else:
                     st.markdown("📍 **No valid GPS coordinates found.**")
-      
 
-
-            # ── AI Detection ──
+            # AI Detection
             st.markdown("### 🔍 AI-Generation Analysis")
-
-            # Modern HF detector
             detector = get_ai_image_detector()
             detector_results = detector(image)
             ai_prob = 0.0
@@ -428,15 +347,14 @@ elif mode == "Image":
                 lbl = res['label'].lower()
                 if any(k in lbl for k in ['ai', 'generated', 'fake', 'synthetic']):
                     ai_prob = res['score']
-                    main_label = res['label']
+                    main_label = "AI-Generated"
                     break
                 elif any(k in lbl for k in ['real', 'human', 'authentic', 'photo']):
                     ai_prob = 1.0 - res['score']
-                    main_label = "REAL"
+                    main_label = "Real Photo"
                     break
             st.markdown(f"**AI Detector**: {main_label} (AI probability: **{ai_prob:.1%}**)")
 
-            # Heuristics
             blur_flag = detect_blur_or_smoothness(image)
             low_noise_flag = detect_noise_level(image)
             ela_flag = error_level_analysis(image)
@@ -445,32 +363,32 @@ elif mode == "Image":
             st.markdown("⚠️ Suspiciously low pixel noise." if low_noise_flag else "✅ Normal noise levels.")
             st.markdown("⚠️ Uniform compression artifacts." if ela_flag else "✅ Varied compression artifacts.")
 
-            # ── Ensemble Verdict ──
+            # Verdict
+            metadata_confidence = 1 if metadata.get("Make") and metadata.get("Model") else 0
+            flags = [blur_flag, low_noise_flag, ela_flag]
+            ai_flags_count = sum(flags)
+
             ai_signals = 0.0
             reasons = []
-
             if ai_prob > 0.70:
                 ai_signals += 3.0
                 reasons.append(f"Strong AI detector match ({ai_prob:.0%})")
             elif ai_prob > 0.45:
                 ai_signals += 1.5
                 reasons.append(f"Moderate AI suspicion ({ai_prob:.0%})")
-
             if blur_flag:
                 ai_signals += 0.8
-                reasons.append("Over-smoothing detected")
+                reasons.append("Over-smoothing")
             if low_noise_flag:
                 ai_signals += 0.8
-                reasons.append("Unnaturally low noise")
+                reasons.append("Low noise")
             if ela_flag:
                 ai_signals += 0.8
-                reasons.append("Uniform ELA artifacts")
-
-            if not (metadata.get("Make") and metadata.get("Model")):
+                reasons.append("Uniform ELA")
+            if metadata_confidence < 1:
                 ai_signals += 0.5
                 reasons.append("Missing camera metadata")
 
-            # Tuned thresholds (less aggressive to reduce false positives on real photos)
             if ai_signals >= 5.0:
                 verdict = "🔴 **Very likely AI-generated**"
                 color = "red"
@@ -478,7 +396,7 @@ elif mode == "Image":
                 verdict = "🟠 **Probably AI or heavily edited**"
                 color = "orange"
             elif ai_signals >= 2.0:
-                verdict = "🟡 **Somewhat suspicious – mixed signals**"
+                verdict = "🟡 **Somewhat suspicious**"
                 color = "yellow"
             else:
                 verdict = "✅ **Most likely real photograph**"
@@ -486,7 +404,6 @@ elif mode == "Image":
 
             st.markdown(f"### Final Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
             st.markdown(f"**Total AI Signal Score**: {ai_signals:.1f}")
-
             if reasons:
                 st.markdown("**Triggered reasons:**")
                 for r in reasons:
