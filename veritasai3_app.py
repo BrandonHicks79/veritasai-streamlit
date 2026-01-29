@@ -270,7 +270,7 @@ if mode == "Text":
     st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use default lookup.",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower...",
                             height=150)
     if claim.strip():
         with st.spinner("Analyzing claim..."):
@@ -294,20 +294,29 @@ if mode == "Text":
                 st.markdown(f"**Confidence**: {score:.2%}")
                 st.caption(f"Checked claim: **{claim}**  \nAgainst evidence: **{evidence}**")
             else:
-                wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
+    # Prioritize Google Fact Check (includes Snopes, PolitiFact, FactCheck.org, etc.)
                 gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
+                
+                # If Google has a strong signal, use it
                 if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.7:
                     final_verdict = gfc_verdict
                     final_explain = gfc_explain
                     final_conf = gfc_conf
-                    source = "Google Fact Check"
+                    source = "Google Fact Check (includes Snopes & others)"
                 else:
+                    # Fallback to Wikipedia only if Google is weak
+                    wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
                     final_verdict = wiki_verdict
                     final_explain = wiki_explain
                     final_conf = wiki_conf
                     source = "Wikipedia"
-                color = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}.get(final_verdict, "gray")
-                icon = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}.get(final_verdict, "❓")
+            
+                # Color and icon mapping
+                color_map = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}
+                icon_map = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}
+                color = color_map.get(final_verdict, "gray")
+                icon = icon_map.get(final_verdict, "❓")
+            
                 st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Confidence**: {final_conf:.0%}")
                 st.markdown(f"**Explanation**: {final_explain}")
