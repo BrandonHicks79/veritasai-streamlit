@@ -270,7 +270,7 @@ if mode == "Text":
     st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use Wikipedia lookup.",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower ...'\n\nLeave blank to use default lookup.",
                             height=150)
     if claim.strip():
         with st.spinner("Analyzing claim..."):
