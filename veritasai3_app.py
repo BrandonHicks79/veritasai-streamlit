@@ -267,72 +267,64 @@ st.caption("Upload an image to check for signs of AI generation/manipulation or 
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
-    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The model checks if the evidence supports, refutes, or is insufficient for the claim.")
+    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The app will tell you if the claim is true, false, or unverified.")
+    
     claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
+    
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower...",
+                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower built in 1889...'\n\nAdd any supporting or contradicting details here.",
                             height=150)
+    
     if claim.strip():
         with st.spinner("Analyzing claim..."):
             if evidence.strip():
+                # Use NLI when evidence is provided
                 nli_model = get_nli_fact_checker()
                 scores = nli_model.predict([(claim, evidence)])
                 probs = scores[0]
                 label_idx = probs.argmax()
                 label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
                 score = probs[label_idx]
+                
                 if label == "ENTAILMENT":
-                    verdict = "✅ **Supported** (evidence entails the claim)"
+                    verdict = "True"
                     color = "green"
+                    explanation = "The provided evidence supports the claim."
                 elif label == "CONTRADICTION":
-                    verdict = "❌ **Refuted** (evidence contradicts the claim)"
+                    verdict = "False"
                     color = "red"
+                    explanation = "The provided evidence contradicts the claim."
                 else:
-                    verdict = "⚪ **Insufficient / Neutral** (not enough info to decide)"
+                    verdict = "Unverified"
                     color = "gray"
+                    explanation = "The evidence is neutral or insufficient to confirm or refute the claim."
+                
                 st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Confidence**: {score:.2%}")
-                st.caption(f"Checked claim: **{claim}**  \nAgainst evidence: **{evidence}**")
+                st.markdown(f"**Explanation**: {explanation}")
+                st.caption(f"Claim: **{claim}**  \nEvidence: **{evidence}**")
             else:
-                # Prioritize Google Fact Check (includes Snopes, PolitiFact, FactCheck.org, etc.)
-                gfc_verdict, gfc_explain, gfc_conf = google_fact_check(claim)
+                # No evidence → use Wikipedia to infer truth value
+                wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
                 
-                if gfc_verdict in ["Supported", "Refuted"] and gfc_conf > 0.6:  # Lower threshold slightly for edge cases
-                    final_verdict = gfc_verdict
-                    final_explain = gfc_explain
-                    final_conf = gfc_conf
-                    source = "Google Fact Check (Snopes, PolitiFact, etc.)"
+                # Smarter verdict mapping for no-evidence case
+                if wiki_verdict == "Supported" or "confirms" in wiki_explain.lower() or "is " in wiki_explain.lower():
+                    verdict = "True"
+                    color = "green"
+                    explanation = wiki_explain.replace("confirms", "Wikipedia confirms the claim is true")
+                elif wiki_verdict == "Refuted" or "disproven" in wiki_explain.lower() or "false" in wiki_explain.lower():
+                    verdict = "False"
+                    color = "red"
+                    explanation = wiki_explain.replace("does not clearly", "Wikipedia indicates the claim is false")
                 else:
-                    # Only fall back to Wikipedia if Google has nothing useful
-                    wiki_verdict, wiki_explain, wiki_conf = wikipedia_fact_check(claim)
-                    
-                    # Make Wikipedia verdict more decisive for obvious facts
-                    if wiki_verdict == "Insufficient" and "in " in wiki_explain.lower() or "is " in wiki_explain.lower():
-                        wiki_verdict = "Supported"
-                        wiki_explain = wiki_explain.replace("Could not confirm", "Wikipedia confirms location/description")
-                        wiki_conf = max(wiki_conf, 0.8)
-                    
-                        final_verdict = wiki_verdict
-                        final_explain = wiki_explain
-                        final_conf = wiki_conf
-                        source = "Wikipedia"
-                        # After setting verdict = "Supported"
-                    if verdict == "Supported" and any(word in norm_summary for word in ["disproven", "debunked", "false", "myth", "pseudoscience"]):
-                        verdict = "Refuted"
-                        explanation = explanation.replace("confirms", "describes as disproven/myth")
-                        conf = max(0.7, conf)  # keep high confidence for debunkings
+                    verdict = "Unverified"
+                    color = "gray"
+                    explanation = wiki_explain.replace("Could not confirm", "Wikipedia could not confirm or refute the claim")
                 
-                        # Color/icon mapping
-                        color_map = {"Supported": "green", "Refuted": "red", "Insufficient": "gray", "Error": "orange"}
-                        icon_map = {"Supported": "✅", "Refuted": "❌", "Insufficient": "⚪", "Error": "⚠️"}
-                        color = color_map.get(final_verdict, "gray")
-                        icon = icon_map.get(final_verdict, "❓")
-                        
-                        st.markdown(f"### Verdict: <span style='color:{color};'>{icon} {final_verdict}</span>", unsafe_allow_html=True)
-                        st.markdown(f"**Confidence**: {final_conf:.0%}")
-                        st.markdown(f"**Explanation**: {final_explain}")
-                        st.caption(f"Source: {source}")
-
+                st.markdown(f"### Verdict: <span style='color:{color}; font-weight:bold;'>{verdict}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Confidence**: {wiki_conf:.0%}")
+                st.markdown(f"**Explanation**: {explanation}")
+                
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
