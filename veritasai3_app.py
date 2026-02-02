@@ -223,20 +223,22 @@ st.caption("Upload an image to check for AI generation/manipulation or paste tex
 mode = st.radio("Choose analysis mode:", ["Text", "Image"])
 
 if mode == "Text":
-    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context. The app will tell you if the claim is **true**, **false**, or **unverified**.")
-    
-    claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
-    
-    evidence = st.text_area("Evidence or context (optional but improves accuracy):",
-                            placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower built in 1889...'\n\nAdd any supporting or contradicting details.",
-                            height=150)
-    analyze_button = st.form_submit_button("Analyze Claim", use_container_width=True, type="primary")
-    
-    if claim.strip():
+    st.markdown("**Fact-Check Mode**: Paste a claim and optional evidence/context below. The app will tell you if the claim is true, false, or unverified.")
+
+    with st.form(key="fact_check_form"):
+        claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
+        
+        evidence = st.text_area("Evidence or context (optional but improves accuracy):",
+                                placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower built in 1889...'\n\nAdd any supporting or contradicting details here.",
+                                height=150)
+        
+        analyze_button = st.form_submit_button("Analyze Claim", use_container_width=True, type="primary")
+
+    if analyze_button and claim.strip():
         with st.spinner("Analyzing claim..."):
             if evidence.strip():
-                nli = get_nli()
-                scores = nli.predict([(claim, evidence)])
+                nli_model = get_nli_fact_checker()
+                scores = nli_model.predict([(claim, evidence)])
                 probs = scores[0]
                 label_idx = probs.argmax()
                 label = ["CONTRADICTION", "ENTAILMENT", "NEUTRAL"][label_idx]
@@ -267,7 +269,6 @@ if mode == "Text":
                 st.markdown(f"**Confidence**: {conf:.0%}")
                 st.markdown(f"**Explanation**: {explanation}")
                 st.caption(f"Source: Wikipedia  \nClaim: **{claim}**")
-
 elif mode == "Image":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
