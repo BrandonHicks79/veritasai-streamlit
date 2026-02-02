@@ -230,6 +230,7 @@ if mode == "Text":
     evidence = st.text_area("Evidence or context (optional but improves accuracy):",
                             placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower built in 1889...'\n\nAdd any supporting or contradicting details.",
                             height=150)
+    analyze_button = st.form_submit_button("Analyze Claim", use_container_width=True, type="primary")
     
     if claim.strip():
         with st.spinner("Analyzing claim..."):
