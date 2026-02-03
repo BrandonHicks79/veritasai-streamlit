@@ -227,12 +227,12 @@ if mode == "Text":
 
     with st.form(key="fact_check_form"):
         claim = st.text_input("Claim to verify:", placeholder="e.g., 'The Eiffel Tower is in Paris.'")
-        
+             
         evidence = st.text_area("Evidence or context (optional but improves accuracy):",
                                 placeholder="e.g., 'The Eiffel Tower is a wrought-iron lattice tower built in 1889...'\n\nAdd any supporting or contradicting details here.",
                                 height=150)
-        
         analyze_button = st.form_submit_button("Analyze Claim", use_container_width=True, type="primary")
+       
 
     if analyze_button and claim.strip():
         with st.spinner("Analyzing claim..."):
