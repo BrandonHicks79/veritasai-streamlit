@@ -57,7 +57,7 @@ def get_sentiment():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english", device="cpu")
 
 @st.cache_resource(show_spinner="Loading NLI fact-check...", ttl="2h")
-def get_nli():
+def get_nli_fact_checker():
     return CrossEncoder('cross-encoder/nli-deberta-v3-base', device='cpu')
 
 @st.cache_resource(show_spinner="Loading factuality model...", ttl="2h")
